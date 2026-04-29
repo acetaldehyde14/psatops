@@ -38,6 +38,14 @@ export function exportCsvUrl(jobId: string): string {
   return `${BASE_URL}/api/v1/jobs/${jobId}/export/csv`;
 }
 
+export async function patchLayout(
+  jobId: string,
+  req: import("./types").LayoutPatchRequest
+): Promise<import("./types").LayoutPatchResponse> {
+  const { data } = await api.patch(`/api/v1/jobs/${jobId}/layout`, req);
+  return data;
+}
+
 export function exportJsonData(result: PalletiseResponse): void {
   const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);

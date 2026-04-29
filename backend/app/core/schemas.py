@@ -157,3 +157,41 @@ class JobStatus(BaseModel):
     created_at: str
     algorithm_used: Optional[str] = None
     order_id: Optional[str] = None
+
+
+# ── Manual Adjustment ──────────────────────────────────────────────────────────
+
+class BoxPatch(BaseModel):
+    box_id: str
+    x_mm: float
+    y_mm: float
+    z_mm: float
+    length_mm: float
+    width_mm: float
+    height_mm: float
+    rotation: str = "LWH"
+    layer: int = 1
+
+
+class PalletPatch(BaseModel):
+    pallet_no: int
+    boxes: List[BoxPatch]
+
+
+class LayoutPatchRequest(BaseModel):
+    pallets: List[PalletPatch]
+
+
+class AdjustmentValidation(BaseModel):
+    is_valid: bool
+    errors: List[str] = []
+    warnings: List[str] = []
+
+
+class LayoutPatchResponse(BaseModel):
+    job_id: str
+    status: str
+    manually_adjusted: bool
+    adjusted_at: str
+    layout_source: str = "manual_adjusted"
+    validation: AdjustmentValidation

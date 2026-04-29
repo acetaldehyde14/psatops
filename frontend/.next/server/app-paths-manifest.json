@@ -1,7 +1,7 @@
 {
   "/page": "app/page.js",
-  "/compare/page": "app/compare/page.js",
-  "/upload/page": "app/upload/page.js",
   "/results/[jobId]/page": "app/results/[jobId]/page.js",
-  "/optimise/page": "app/optimise/page.js"
+  "/upload/page": "app/upload/page.js",
+  "/optimise/page": "app/optimise/page.js",
+  "/compare/page": "app/compare/page.js"
 }

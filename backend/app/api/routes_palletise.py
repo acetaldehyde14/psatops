@@ -15,6 +15,7 @@ async def palletise(req: PalletiseRequest):
     result = run_optimisation(req, job_id)
     result.summary.warnings = warnings + result.summary.warnings
     job_store.save(job_id, result)
+    job_store.save_pallet_config(job_id, req.pallet.model_dump())
     return result
 
 
@@ -32,6 +33,7 @@ async def compare(req: CompareRequest):
         job_id = job_store.create_job()
         result = run_optimisation(single_req, job_id)
         job_store.save(job_id, result)
+        job_store.save_pallet_config(job_id, req.pallet.model_dump())
         results.append(AlgorithmCompareEntry(
             algorithm=algo.value,
             pallets_used=result.summary.pallets_used,

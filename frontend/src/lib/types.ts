@@ -115,3 +115,41 @@ export interface UploadResponse {
   items: Record<string, unknown>[];
   warnings: string[];
 }
+
+// ── Manual Adjustment ──────────────────────────────────────────────────────────
+
+export interface BoxPatch {
+  box_id: string;
+  x_mm: number;
+  y_mm: number;
+  z_mm: number;
+  length_mm: number;
+  width_mm: number;
+  height_mm: number;
+  rotation: string;
+  layer: number;
+}
+
+export interface PalletPatch {
+  pallet_no: number;
+  boxes: BoxPatch[];
+}
+
+export interface LayoutPatchRequest {
+  pallets: PalletPatch[];
+}
+
+export interface AdjustmentValidation {
+  is_valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface LayoutPatchResponse {
+  job_id: string;
+  status: string;
+  manually_adjusted: boolean;
+  adjusted_at: string;
+  layout_source: string;
+  validation: AdjustmentValidation;
+}

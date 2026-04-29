@@ -4,13 +4,13 @@ import io
 from app.core.schemas import PalletiseResponse
 
 
-def to_csv(result: PalletiseResponse) -> str:
+def to_csv(result: PalletiseResponse, layout_source: str = "generated") -> str:
     output = io.StringIO()
     writer = csv.writer(output)
 
     writer.writerow([
-        "job_id", "order_id", "algorithm", "pallet_no",
-        "box_id", "sku", "lot_no",
+        "job_id", "order_id", "algorithm", "layout_source",
+        "pallet_no", "box_id", "sku", "lot_no",
         "x_mm", "y_mm", "z_mm",
         "length_mm", "width_mm", "height_mm",
         "weight_kg", "rotation", "layer", "pick_sequence", "location",
@@ -22,6 +22,7 @@ def to_csv(result: PalletiseResponse) -> str:
                 result.job_id,
                 result.order_id,
                 result.algorithm_used,
+                layout_source,
                 pallet.pallet_no,
                 box.box_id,
                 box.sku,

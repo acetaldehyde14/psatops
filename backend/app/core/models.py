@@ -18,6 +18,9 @@ class Box:
     expiry_date: Optional[str] = None
     location: Optional[str] = None
     requested_delivery_date: Optional[str] = None
+    # Box constraints
+    stand_upright_only: bool = False
+    no_load_on_top: bool = False
     # Placement results
     x: float = 0.0
     y: float = 0.0

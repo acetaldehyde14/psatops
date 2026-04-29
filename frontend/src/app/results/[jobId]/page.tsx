@@ -1,25 +1,29 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { getJob, exportCsvUrl, exportJsonData, patchLayout } from "@/lib/api";
 import type {
   PalletiseResponse, PalletResult, BoxResult,
-  AdjustmentValidation,
+  ManualAdjustmentSettings, LayoutValidationResult,
 } from "@/lib/types";
 import ResultSummaryCards from "@/components/ResultSummaryCards";
 import OrderTable from "@/components/OrderTable";
 import EditPanel from "@/components/EditPanel";
+import ManualAdjustToolbar from "@/components/ManualAdjustToolbar";
+import type { SelectionMode } from "@/components/ManualAdjustToolbar";
+import SkuLegend from "@/components/SkuLegend";
+import { validateLayout } from "@/lib/layoutValidation";
+import { getSkuColor } from "@/lib/mockData";
 import dynamic from "next/dynamic";
 import clsx from "clsx";
 
 const PalletViewer3D = dynamic(() => import("@/components/PalletViewer3D"), { ssr: false });
 
-// ── Deep-clone a pallet array ─────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function clonePallets(pallets: PalletResult[]): PalletResult[] {
   return JSON.parse(JSON.stringify(pallets));
 }
 
-// ── Rotate a box 90° around Z (swap length/width) ────────────────────────────
 function rotateBox(box: BoxResult): BoxResult {
   return {
     ...box,
@@ -29,74 +33,16 @@ function rotateBox(box: BoxResult): BoxResult {
   };
 }
 
-// ── Extract box_ids mentioned in validation errors ────────────────────────────
-function invalidBoxIds(validation: AdjustmentValidation | null): Set<string> {
-  if (!validation) return new Set();
-  const ids = new Set<string>();
-  [...validation.errors, ...validation.warnings].forEach((msg) => {
-    const m = msg.match(/'([^']+)'/);
-    if (m) ids.add(m[1]);
-  });
-  return ids;
-}
+const DEFAULT_SETTINGS: ManualAdjustmentSettings = {
+  edge_threshold_length_mm: 0,
+  edge_threshold_width_mm: 0,
+  snap_grid_mm: 50,
+  drag_sensitivity: 0.35,
+};
 
-// ── Client-side quick validation (boundary + overlap) ─────────────────────────
-function quickValidate(
-  pallets: PalletResult[],
-  spec: { length_mm: number; width_mm: number; max_height_mm: number; max_weight_kg: number },
-): AdjustmentValidation {
-  const errors: string[] = [];
-  const warnings: string[] = [];
+const PALLET_SPEC = { length_mm: 1200, width_mm: 1100, max_height_mm: 1150, max_weight_kg: 1500 };
 
-  for (const pallet of pallets) {
-    let weight = 0;
-    const boxes = pallet.boxes;
-
-    for (const b of boxes) {
-      const { box_id: id, x_mm: x, y_mm: y, z_mm: z, length_mm: l, width_mm: w, height_mm: h } = b;
-      if (x < -0.5 || y < -0.5 || z < -0.5) errors.push(`Box '${id}': negative coords.`);
-      if (x + l > spec.length_mm + 0.5) errors.push(`Box '${id}': exceeds pallet length.`);
-      if (y + w > spec.width_mm + 0.5) errors.push(`Box '${id}': exceeds pallet width.`);
-      if (z + h > spec.max_height_mm + 0.5) errors.push(`Box '${id}': exceeds max height.`);
-      weight += b.weight_kg;
-    }
-
-    if (weight > spec.max_weight_kg + 0.001)
-      errors.push(`Pallet ${pallet.pallet_no}: weight ${weight.toFixed(1)} kg exceeds max ${spec.max_weight_kg} kg.`);
-
-    // Overlap (simplified)
-    for (let i = 0; i < boxes.length; i++) {
-      for (let j = i + 1; j < boxes.length; j++) {
-        const a = boxes[i], b2 = boxes[j];
-        const EPS = 0.5;
-        if (
-          a.x_mm < b2.x_mm + b2.length_mm - EPS && a.x_mm + a.length_mm > b2.x_mm + EPS &&
-          a.y_mm < b2.y_mm + b2.width_mm - EPS && a.y_mm + a.width_mm > b2.y_mm + EPS &&
-          a.z_mm < b2.z_mm + b2.height_mm - EPS && a.z_mm + a.height_mm > b2.z_mm + EPS
-        ) {
-          errors.push(`Boxes '${a.box_id}' and '${b2.box_id}' overlap.`);
-        }
-      }
-    }
-
-    // Floating
-    for (const b of boxes) {
-      if (b.z_mm < 0.5) continue;
-      const hasSupport = boxes.some((s) => {
-        if (s.box_id === b.box_id) return false;
-        return (
-          Math.abs((s.z_mm + s.height_mm) - b.z_mm) < 1 &&
-          s.x_mm < b.x_mm + b.length_mm - 0.5 && s.x_mm + s.length_mm > b.x_mm + 0.5 &&
-          s.y_mm < b.y_mm + b.width_mm - 0.5 && s.y_mm + s.width_mm > b.y_mm + 0.5
-        );
-      });
-      if (!hasSupport) warnings.push(`Box '${b.box_id}' is floating.`);
-    }
-  }
-
-  return { is_valid: errors.length === 0, errors, warnings };
-}
-
+// ── Page ──────────────────────────────────────────────────────────────────────
 export default function ResultsPage() {
   const params = useParams();
   const jobId = params?.jobId as string;
@@ -106,21 +52,24 @@ export default function ResultsPage() {
   const [selectedPallet, setSelectedPallet] = useState(0);
   const [layerFilter, setLayerFilter] = useState<number | null>(null);
   const [tab, setTab] = useState<"3d" | "table">("3d");
+  const [isManuallyAdjusted, setIsManuallyAdjusted] = useState(false);
 
-  // Edit mode state
+  // Edit mode
   const [editMode, setEditMode] = useState(false);
   const [editedPallets, setEditedPallets] = useState<PalletResult[]>([]);
   const [originalPallets, setOriginalPallets] = useState<PalletResult[]>([]);
   const [history, setHistory] = useState<PalletResult[][]>([]);
   const [future, setFuture] = useState<PalletResult[][]>([]);
-  const [selectedBox, setSelectedBox] = useState<BoxResult | null>(null);
-  const [snapGrid, setSnapGrid] = useState(10);
-  const [validation, setValidation] = useState<AdjustmentValidation | null>(null);
+  const [selectedBoxIds, setSelectedBoxIds] = useState<Set<string>>(new Set());
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>("single");
+  const [settings, setSettings] = useState<ManualAdjustmentSettings>(DEFAULT_SETTINGS);
+  const [snapToBoxEdges, setSnapToBoxEdges] = useState(false);
+  const [snapToThreshold, setSnapToThreshold] = useState(true);
+  const [validation, setValidation] = useState<LayoutValidationResult | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
-  const [isManuallyAdjusted, setIsManuallyAdjusted] = useState(false);
-
-  const palletSpec = { length_mm: 1200, width_mm: 1100, max_height_mm: 1150, max_weight_kg: 1500 };
+  const [legendSku, setLegendSku] = useState<string | undefined>();
+  const [legendHoverSku, setLegendHoverSku] = useState<string | undefined>();
 
   useEffect(() => {
     if (!jobId) return;
@@ -134,14 +83,14 @@ export default function ResultsPage() {
       .catch(() => setError("Could not load job " + jobId));
   }, [jobId]);
 
-  // Re-run quick validation whenever editedPallets changes in edit mode
+  // Live validation while in edit mode
   useEffect(() => {
     if (editMode && editedPallets.length > 0) {
-      setValidation(quickValidate(editedPallets, palletSpec));
+      setValidation(validateLayout(editedPallets, PALLET_SPEC, settings));
     }
-  }, [editedPallets, editMode]);
+  }, [editedPallets, editMode, settings]);
 
-  // ── Mutation helpers ──────────────────────────────────────────────────────
+  // ── History helpers ───────────────────────────────────────────────────────
   const pushHistory = useCallback((current: PalletResult[]) => {
     setHistory((h) => [...h.slice(-49), clonePallets(current)]);
     setFuture([]);
@@ -156,64 +105,123 @@ export default function ResultsPage() {
     });
   }, [pushHistory]);
 
-  // ── Edit operations ───────────────────────────────────────────────────────
-  const handleBoxMove = useCallback((boxId: string, palletIdx: number, x: number, y: number, z: number) => {
+  // ── Box click / selection ─────────────────────────────────────────────────
+  const handleBoxClick = useCallback((box: BoxResult, multi: boolean) => {
+    const currentPallet = editedPallets[selectedPallet];
+    if (!currentPallet) return;
+
+    if (selectionMode === "sku") {
+      const skuIds = new Set(
+        currentPallet.boxes.filter((b) => b.sku === box.sku).map((b) => b.box_id),
+      );
+      setSelectedBoxIds(skuIds);
+    } else if (multi) {
+      setSelectedBoxIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(box.box_id)) next.delete(box.box_id);
+        else next.add(box.box_id);
+        return next;
+      });
+    } else {
+      setSelectedBoxIds(new Set([box.box_id]));
+    }
+  }, [editedPallets, selectedPallet, selectionMode]);
+
+  // ── Drag end from viewer ──────────────────────────────────────────────────
+  const handleBoxDragEnd = useCallback((moves: Array<{ box_id: string; x: number; y: number }>) => {
+    mutatePallets((draft) => {
+      const p = draft[selectedPallet];
+      if (!p) return;
+      for (const { box_id, x, y } of moves) {
+        const box = p.boxes.find((b) => b.box_id === box_id);
+        if (box) { box.x_mm = Math.round(x); box.y_mm = Math.round(y); }
+      }
+    });
+  }, [mutatePallets, selectedPallet]);
+
+  // ── Arrow-step moves from EditPanel (dx/dy/dz are deltas) ────────────────
+  const handleMove = useCallback((
+    boxIds: string[], palletIdx: number, dx: number, dy: number, dz: number,
+  ) => {
+    mutatePallets((draft) => {
+      const p = draft[palletIdx];
+      if (!p) return;
+      for (const id of boxIds) {
+        const box = p.boxes.find((b) => b.box_id === id);
+        if (!box) continue;
+        box.x_mm = Math.max(0, box.x_mm + dx);
+        box.y_mm = Math.max(0, box.y_mm + dy);
+        box.z_mm = Math.max(0, box.z_mm + dz);
+        box.layer = Math.floor(box.z_mm / 250) + 1;
+      }
+    });
+  }, [mutatePallets]);
+
+  // ── Rotate 90° ────────────────────────────────────────────────────────────
+  const handleRotate = useCallback((boxIds: string[], palletIdx: number) => {
+    mutatePallets((draft) => {
+      const p = draft[palletIdx];
+      if (!p) return;
+      for (const id of boxIds) {
+        const box = p.boxes.find((b) => b.box_id === id);
+        if (box) Object.assign(box, rotateBox(box));
+      }
+    });
+  }, [mutatePallets]);
+
+  // ── Stand Upright ─────────────────────────────────────────────────────────
+  const handleStandUpright = useCallback((boxId: string, palletIdx: number) => {
     mutatePallets((draft) => {
       const box = draft[palletIdx]?.boxes.find((b) => b.box_id === boxId);
       if (!box) return;
-      box.x_mm = Math.max(0, Math.round(x / snapGrid) * snapGrid);
-      box.y_mm = Math.max(0, Math.round(y / snapGrid) * snapGrid);
-      box.z_mm = Math.max(0, Math.round(z / snapGrid) * snapGrid);
-      box.layer = Math.floor(box.z_mm / 250) + 1;
+      const origH = box.original_height_mm ?? box.height_mm;
+      box.height_mm = origH;
+      const dims = [box.length_mm, box.width_mm].sort((a, b) => a - b);
+      box.length_mm = dims[1];
+      box.width_mm = dims[0];
+      box.rotation = "LWH";
     });
-    // Keep selected box in sync
-    setSelectedBox((prev) => prev?.box_id === boxId
-      ? { ...prev, x_mm: x, y_mm: y, z_mm: z }
-      : prev);
-  }, [mutatePallets, snapGrid]);
-
-  const handleBoxMoveFromViewer = useCallback((boxId: string, x: number, y: number, z: number) => {
-    handleBoxMove(boxId, selectedPallet, x, y, z);
-  }, [handleBoxMove, selectedPallet]);
-
-  const handleRotate = useCallback((boxId: string, palletIdx: number) => {
-    mutatePallets((draft) => {
-      const box = draft[palletIdx]?.boxes.find((b) => b.box_id === boxId);
-      if (!box) return;
-      const rotated = rotateBox(box);
-      Object.assign(box, rotated);
-    });
-    setSelectedBox((prev) => prev?.box_id === boxId ? rotateBox(prev) : prev);
   }, [mutatePallets]);
 
-  const handleDelete = useCallback((boxId: string, palletIdx: number) => {
+  // ── Delete ────────────────────────────────────────────────────────────────
+  const handleDelete = useCallback((boxIds: string[], palletIdx: number) => {
     mutatePallets((draft) => {
-      draft[palletIdx].boxes = draft[palletIdx].boxes.filter((b) => b.box_id !== boxId);
-      draft[palletIdx].box_count = draft[palletIdx].boxes.length;
+      const p = draft[palletIdx];
+      if (!p) return;
+      p.boxes = p.boxes.filter((b) => !boxIds.includes(b.box_id));
+      p.box_count = p.boxes.length;
     });
-    setSelectedBox((prev) => prev?.box_id === boxId ? null : prev);
+    setSelectedBoxIds(new Set());
   }, [mutatePallets]);
 
-  const handleMoveToPallet = useCallback((boxId: string, fromIdx: number, toIdx: number) => {
+  // ── Move to other pallet ──────────────────────────────────────────────────
+  const handleMoveToPallet = useCallback((
+    boxIds: string[], fromIdx: number, toIdx: number,
+  ) => {
     mutatePallets((draft) => {
-      const box = draft[fromIdx]?.boxes.find((b) => b.box_id === boxId);
-      if (!box) return;
-      draft[fromIdx].boxes = draft[fromIdx].boxes.filter((b) => b.box_id !== boxId);
-      draft[fromIdx].box_count = draft[fromIdx].boxes.length;
-      draft[toIdx].boxes.push({ ...box, x_mm: 0, y_mm: 0, z_mm: 0, layer: 1 });
-      draft[toIdx].box_count = draft[toIdx].boxes.length;
+      const from = draft[fromIdx];
+      const to = draft[toIdx];
+      if (!from || !to) return;
+      const moving = from.boxes.filter((b) => boxIds.includes(b.box_id));
+      from.boxes = from.boxes.filter((b) => !boxIds.includes(b.box_id));
+      from.box_count = from.boxes.length;
+      for (const box of moving) {
+        to.boxes.push({ ...box, x_mm: 0, y_mm: 0, z_mm: 0, layer: 1 });
+      }
+      to.box_count = to.boxes.length;
     });
     setSelectedPallet(toIdx);
-    setSelectedBox(null);
+    setSelectedBoxIds(new Set());
   }, [mutatePallets]);
 
+  // ── Undo / Redo / Reset ───────────────────────────────────────────────────
   const handleUndo = useCallback(() => {
     if (history.length === 0) return;
     const prev = history[history.length - 1];
     setFuture((f) => [clonePallets(editedPallets), ...f.slice(0, 49)]);
     setHistory((h) => h.slice(0, -1));
     setEditedPallets(prev);
-    setSelectedBox(null);
+    setSelectedBoxIds(new Set());
   }, [history, editedPallets]);
 
   const handleRedo = useCallback(() => {
@@ -222,17 +230,18 @@ export default function ResultsPage() {
     setHistory((h) => [...h, clonePallets(editedPallets)]);
     setFuture((f) => f.slice(1));
     setEditedPallets(next);
-    setSelectedBox(null);
+    setSelectedBoxIds(new Set());
   }, [future, editedPallets]);
 
   const handleReset = useCallback(() => {
     setEditedPallets(clonePallets(originalPallets));
     setHistory([]);
     setFuture([]);
-    setSelectedBox(null);
+    setSelectedBoxIds(new Set());
     setValidation(null);
   }, [originalPallets]);
 
+  // ── Save ──────────────────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
     if (!result) return;
     setIsSaving(true);
@@ -251,32 +260,38 @@ export default function ResultsPage() {
             height_mm: b.height_mm,
             rotation: b.rotation,
             layer: b.layer,
+            stand_upright_only: b.stand_upright_only,
+            no_load_on_top: b.no_load_on_top,
           })),
         })),
+        settings,
       });
-      setValidation(res.validation);
       setIsManuallyAdjusted(true);
-      setSaveMsg(res.validation.is_valid ? "Saved successfully ✓" : "Saved with errors — see panel");
+      setSaveMsg(res.validation.is_valid
+        ? "Saved successfully ✓"
+        : "Saved with errors — review highlighted boxes");
     } catch {
       setSaveMsg("Save failed. Is the backend running?");
     } finally {
       setIsSaving(false);
     }
-  }, [result, jobId, editedPallets]);
+  }, [result, jobId, editedPallets, settings]);
 
+  // ── Enter / exit edit mode ────────────────────────────────────────────────
   const enterEditMode = () => {
     setEditedPallets(clonePallets(result?.pallets ?? []));
     setOriginalPallets(clonePallets(result?.pallets ?? []));
     setHistory([]);
     setFuture([]);
-    setSelectedBox(null);
+    setSelectedBoxIds(new Set());
     setValidation(null);
+    setSaveMsg(null);
     setEditMode(true);
   };
 
   const exitEditMode = () => {
     setEditMode(false);
-    setSelectedBox(null);
+    setSelectedBoxIds(new Set());
     setValidation(null);
     setSaveMsg(null);
   };
@@ -287,7 +302,14 @@ export default function ResultsPage() {
   const activePallets = editMode ? editedPallets : result.pallets;
   const pallet = activePallets[selectedPallet];
   const maxLayer = pallet ? Math.max(...pallet.boxes.map((b) => b.layer), 1) : 1;
-  const badIds = invalidBoxIds(validation);
+  const invalidIds = new Set<string>(validation?.invalidBoxIds ?? []);
+  const selectedBoxIdsArr = Array.from(selectedBoxIds);
+  const colorBySku = useMemo(() => {
+    const colors: Record<string, string> = {};
+    for (const box of pallet?.boxes ?? []) colors[box.sku] = getSkuColor(box.sku);
+    return colors;
+  }, [pallet?.boxes]);
+  const highlightedSku = legendHoverSku ?? legendSku;
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
@@ -306,17 +328,12 @@ export default function ResultsPage() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          {!editMode ? (
+          {!editMode && (
             <button
               onClick={enterEditMode}
               className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition-colors"
             >
               ✏ Manual Adjust
-            </button>
-          ) : (
-            <button onClick={exitEditMode}
-              className="bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium px-4 py-2 rounded-lg text-sm">
-              Exit Edit Mode
             </button>
           )}
           <a href={exportCsvUrl(result.job_id)}
@@ -333,14 +350,37 @@ export default function ResultsPage() {
         </div>
       </div>
 
+      {/* Edit toolbar */}
+      {editMode && (
+        <ManualAdjustToolbar
+          settings={settings}
+          selectionMode={selectionMode}
+          snapToBoxEdges={snapToBoxEdges}
+          snapToThreshold={snapToThreshold}
+          canUndo={history.length > 0}
+          canRedo={future.length > 0}
+          isSaving={isSaving}
+          isOrbitActive={false}
+          onSettingsChange={setSettings}
+          onSelectionModeChange={setSelectionMode}
+          onSnapToBoxEdgesChange={setSnapToBoxEdges}
+          onSnapToThresholdChange={setSnapToThreshold}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onReset={handleReset}
+          onSave={handleSave}
+          onExit={exitEditMode}
+        />
+      )}
+
       {saveMsg && (
-        <div className={clsx("px-6 py-2 text-sm font-medium",
+        <div className={clsx("px-6 py-2 text-sm font-medium flex-shrink-0",
           saveMsg.includes("✓") ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700")}>
           {saveMsg}
         </div>
       )}
 
-      {/* Summary cards */}
+      {/* Summary */}
       <div className="px-6 py-3 border-b border-gray-100 flex-shrink-0">
         <ResultSummaryCards summary={result.summary} />
       </div>
@@ -352,10 +392,11 @@ export default function ResultsPage() {
         </div>
       )}
 
-      {/* Pallet selector */}
+      {/* Pallet tabs */}
       <div className="flex gap-2 px-6 py-2 flex-shrink-0 flex-wrap border-b border-gray-100">
         {activePallets.map((p, i) => (
-          <button key={i} onClick={() => { setSelectedPallet(i); setLayerFilter(null); }}
+          <button key={i}
+            onClick={() => { setSelectedPallet(i); setLayerFilter(null); setSelectedBoxIds(new Set()); }}
             className={clsx("px-3 py-1.5 rounded text-sm font-medium border transition-colors",
               selectedPallet === i
                 ? "bg-blue-600 text-white border-blue-600"
@@ -367,9 +408,8 @@ export default function ResultsPage() {
 
       {/* Main content */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: viewer + table */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Tabs */}
+          {/* View tabs */}
           <div className="flex gap-1 px-6 pt-2 border-b border-gray-200 flex-shrink-0">
             {(["3d", "table"] as const).map((t) => (
               <button key={t} onClick={() => setTab(t)}
@@ -382,6 +422,7 @@ export default function ResultsPage() {
 
           {tab === "3d" && pallet && (
             <div className="flex-1 flex flex-col overflow-hidden">
+              {/* Layer filter */}
               <div className="flex items-center gap-3 px-4 py-1.5 bg-gray-50 border-b border-gray-100 flex-wrap flex-shrink-0">
                 <span className="text-xs text-gray-500">Layer:</span>
                 <button onClick={() => setLayerFilter(null)}
@@ -395,17 +436,30 @@ export default function ResultsPage() {
                   </button>
                 ))}
               </div>
-              <div className="flex-1 relative">
-                <PalletViewer3D
-                  pallet={pallet}
-                  palletSpec={palletSpec}
-                  layerFilter={layerFilter}
-                  editMode={editMode}
-                  invalidBoxIds={badIds}
-                  selectedBoxId={selectedBox?.box_id ?? null}
-                  snapGrid={snapGrid}
-                  onBoxSelect={(box) => setSelectedBox(box)}
-                  onBoxMove={handleBoxMoveFromViewer}
+              <div className="flex-1 flex min-h-0">
+                <div className="flex-1 relative min-w-0">
+                  <PalletViewer3D
+                    pallet={pallet}
+                    palletSpec={PALLET_SPEC}
+                    layerFilter={layerFilter}
+                    editMode={editMode}
+                    settings={settings}
+                    invalidBoxIds={invalidIds}
+                    selectedBoxIds={selectedBoxIds}
+                    highlightedSku={highlightedSku}
+                    colorBySku={colorBySku}
+                    snapToBoxEdges={snapToBoxEdges}
+                    snapToThreshold={snapToThreshold}
+                    onBoxClick={editMode ? handleBoxClick : undefined}
+                    onBoxDragEnd={editMode ? handleBoxDragEnd : undefined}
+                  />
+                </div>
+                <SkuLegend
+                  boxes={pallet.boxes}
+                  colorBySku={colorBySku}
+                  selectedSku={legendSku}
+                  onSkuClick={(sku) => setLegendSku((prev) => prev === sku ? undefined : sku)}
+                  onSkuHover={setLegendHoverSku}
                 />
               </div>
             </div>
@@ -418,27 +472,23 @@ export default function ResultsPage() {
           )}
         </div>
 
-        {/* Right: edit panel */}
+        {/* Edit panel */}
         {editMode && (
           <EditPanel
-            selectedBox={selectedBox}
+            selectedBoxIds={selectedBoxIdsArr}
             selectedPalletIdx={selectedPallet}
             pallets={editedPallets}
-            palletSpec={palletSpec}
-            snapGrid={snapGrid}
+            palletSpec={PALLET_SPEC}
+            settings={settings}
+            onSettingsChange={setSettings}
             validation={validation}
-            canUndo={history.length > 0}
-            canRedo={future.length > 0}
             isSaving={isSaving}
-            onMove={handleBoxMove}
+            onMove={handleMove}
             onRotate={handleRotate}
+            onStandUpright={handleStandUpright}
             onDelete={handleDelete}
             onMoveToPallet={handleMoveToPallet}
-            onUndo={handleUndo}
-            onRedo={handleRedo}
             onSave={handleSave}
-            onReset={handleReset}
-            onSnapChange={setSnapGrid}
             onClose={exitEditMode}
           />
         )}

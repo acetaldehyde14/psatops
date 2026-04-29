@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
-from datetime import date
 from enum import Enum
 
 
@@ -20,7 +19,7 @@ class StackBy(str, Enum):
 
 class PalletSpec(BaseModel):
     length_mm: float = Field(default=1200, gt=0)
-    width_mm: float = Field(default=1000, gt=0)
+    width_mm: float = Field(default=1100, gt=0)
     max_height_mm: float = Field(default=1150, gt=0)
     max_weight_kg: float = Field(default=1500, gt=0)
 
@@ -42,6 +41,9 @@ class ItemRequest(BaseModel):
     width_mm: float = Field(gt=0)
     height_mm: float = Field(gt=0)
     weight_kg: float = Field(gt=0)
+    # Box constraints
+    stand_upright_only: bool = False
+    no_load_on_top: bool = False
     # Optional warehouse fields
     item: Optional[str] = None
     lot_no: Optional[str] = None
@@ -96,6 +98,11 @@ class BoxResult(BaseModel):
     pick_sequence: int = 1
     location: Optional[str] = None
     expiry_date: Optional[str] = None
+    # Box constraints (carried through from ItemRequest)
+    stand_upright_only: bool = False
+    no_load_on_top: bool = False
+    # original_height_mm: preserved for stand_upright_only validation
+    original_height_mm: Optional[float] = None
 
 
 class PalletResult(BaseModel):
@@ -161,6 +168,13 @@ class JobStatus(BaseModel):
 
 # ── Manual Adjustment ──────────────────────────────────────────────────────────
 
+class ManualAdjustmentSettings(BaseModel):
+    edge_threshold_length_mm: float = 0.0
+    edge_threshold_width_mm: float = 0.0
+    snap_grid_mm: int = 50
+    drag_sensitivity: float = 0.35
+
+
 class BoxPatch(BaseModel):
     box_id: str
     x_mm: float
@@ -171,6 +185,10 @@ class BoxPatch(BaseModel):
     height_mm: float
     rotation: str = "LWH"
     layer: int = 1
+    # Constraints — frontend echoes these back; backend overrides with originals
+    stand_upright_only: bool = False
+    no_load_on_top: bool = False
+    manual_locked: bool = False
 
 
 class PalletPatch(BaseModel):
@@ -180,6 +198,7 @@ class PalletPatch(BaseModel):
 
 class LayoutPatchRequest(BaseModel):
     pallets: List[PalletPatch]
+    settings: ManualAdjustmentSettings = ManualAdjustmentSettings()
 
 
 class AdjustmentValidation(BaseModel):

@@ -35,6 +35,8 @@ export interface ItemRequest {
   store_no?: string;
   dc_no?: string;
   requested_delivery_date?: string;
+  stand_upright_only?: boolean;
+  no_load_on_top?: boolean;
 }
 
 export interface PalletiseRequest {
@@ -61,6 +63,9 @@ export interface BoxResult {
   pick_sequence: number;
   location?: string;
   expiry_date?: string;
+  stand_upright_only?: boolean;
+  no_load_on_top?: boolean;
+  original_height_mm?: number;
 }
 
 export interface PalletResult {
@@ -90,6 +95,8 @@ export interface PalletiseResponse {
   algorithm_used: string;
   summary: SummaryResult;
   pallets: PalletResult[];
+  manually_adjusted?: boolean;
+  layout_source?: string;
 }
 
 export interface AlgorithmCompareEntry {
@@ -118,6 +125,13 @@ export interface UploadResponse {
 
 // ── Manual Adjustment ──────────────────────────────────────────────────────────
 
+export interface ManualAdjustmentSettings {
+  edge_threshold_length_mm: number;
+  edge_threshold_width_mm: number;
+  snap_grid_mm: number;
+  drag_sensitivity: number;
+}
+
 export interface BoxPatch {
   box_id: string;
   x_mm: number;
@@ -128,6 +142,9 @@ export interface BoxPatch {
   height_mm: number;
   rotation: string;
   layer: number;
+  stand_upright_only?: boolean;
+  no_load_on_top?: boolean;
+  manual_locked?: boolean;
 }
 
 export interface PalletPatch {
@@ -137,6 +154,7 @@ export interface PalletPatch {
 
 export interface LayoutPatchRequest {
   pallets: PalletPatch[];
+  settings: ManualAdjustmentSettings;
 }
 
 export interface AdjustmentValidation {
@@ -152,4 +170,11 @@ export interface LayoutPatchResponse {
   adjusted_at: string;
   layout_source: string;
   validation: AdjustmentValidation;
+}
+
+export interface LayoutValidationResult {
+  isValid: boolean;
+  invalidBoxIds: string[];
+  errors: string[];
+  warnings: string[];
 }

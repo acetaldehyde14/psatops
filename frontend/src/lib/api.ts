@@ -6,9 +6,10 @@ import type {
   UploadResponse,
 } from "./types";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const api = axios.create({ baseURL: BASE_URL });
+const api = axios.create({ baseURL: API_BASE_URL });
 
 export async function palletise(req: PalletiseRequest): Promise<PalletiseResponse> {
   const { data } = await api.post<PalletiseResponse>("/api/v1/palletise", req);
@@ -35,14 +36,16 @@ export async function uploadFile(file: File): Promise<UploadResponse> {
 }
 
 export function exportCsvUrl(jobId: string): string {
-  return `${BASE_URL}/api/v1/jobs/${jobId}/export/csv`;
+  return `${API_BASE_URL}/api/v1/jobs/${jobId}/export/csv`;
 }
 
 export async function patchLayout(
   jobId: string,
   req: import("./types").LayoutPatchRequest
 ): Promise<import("./types").LayoutPatchResponse> {
-  const { data } = await api.patch(`/api/v1/jobs/${jobId}/layout`, req);
+  const { data } = await api.patch<import("./types").LayoutPatchResponse>(
+    `/api/v1/jobs/${jobId}/layout`, req
+  );
   return data;
 }
 

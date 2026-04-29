@@ -35,6 +35,8 @@ def _expand_items(req: PalletiseRequest) -> List[Box]:
                 expiry_date=item.expiry_date,
                 location=item.location,
                 requested_delivery_date=item.requested_delivery_date,
+                stand_upright_only=item.stand_upright_only,
+                no_load_on_top=item.no_load_on_top,
             )
             boxes.append(b)
             counter += 1
@@ -127,6 +129,9 @@ def _pallets_to_response(
                 pick_sequence=b.pick_sequence,
                 location=b.location,
                 expiry_date=b.expiry_date,
+                stand_upright_only=b.stand_upright_only,
+                no_load_on_top=b.no_load_on_top,
+                original_height_mm=round(b.height, 2),
             ))
 
         pallet_results.append(PalletResult(

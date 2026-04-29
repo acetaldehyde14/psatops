@@ -2,10 +2,12 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from datetime import datetime, timezone
 import io
-from app.core.schemas import LayoutPatchRequest, LayoutPatchResponse, PalletResult
+from app.core.schemas import (
+    LayoutPatchRequest, LayoutPatchResponse, PalletResult,
+)
 from app.services.job_store import job_store
 from app.services.export_service import to_csv
-from app.services.validation_service import validate_adjusted_layout
+from app.services.layout_validation_service import validate_adjusted_layout
 
 router = APIRouter()
 
@@ -18,7 +20,6 @@ async def get_job(job_id: str):
         if status:
             return status
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-    # Attach metadata flags
     data = result.model_dump()
     data["manually_adjusted"] = job_store.is_manually_adjusted(job_id)
     data["layout_source"] = "manual_adjusted" if data["manually_adjusted"] else "generated"
@@ -31,31 +32,32 @@ async def patch_layout(job_id: str, body: LayoutPatchRequest):
     if not original:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
 
-    pallet_config = job_store.get_pallet_config(job_id)
-    if not pallet_config:
-        # Fallback defaults
-        pallet_config = {"length_mm": 1200, "width_mm": 1100, "max_height_mm": 1150, "max_weight_kg": 1500}
+    pallet_config = job_store.get_pallet_config(job_id) or {
+        "length_mm": 1200, "width_mm": 1100,
+        "max_height_mm": 1150, "max_weight_kg": 1500,
+    }
 
     original_box_ids = job_store.get_all_box_ids(job_id)
-
-    validation = validate_adjusted_layout(body, pallet_config, original_box_ids)
-
-    adjusted_at = datetime.now(timezone.utc).isoformat()
-
-    # Build adjusted PalletResult objects, preserving box metadata from original
     orig_box_map = {
         b.box_id: b
         for p in original.pallets
         for b in p.boxes
     }
 
+    validation = validate_adjusted_layout(
+        body, pallet_config, original_box_ids, orig_box_map
+    )
+
+    adjusted_at = datetime.now(timezone.utc).isoformat()
+
+    # Build adjusted PalletResult objects, merging position patches with original metadata
     adjusted_pallets: list[PalletResult] = []
     for pp in body.pallets:
         new_boxes = []
         for bp in pp.boxes:
-            orig = orig_box_map.get(bp.box_id)
-            if orig:
-                updated = orig.model_copy(update={
+            orig_box = orig_box_map.get(bp.box_id)
+            if orig_box:
+                updated = orig_box.model_copy(update={
                     "x_mm": bp.x_mm,
                     "y_mm": bp.y_mm,
                     "z_mm": bp.z_mm,
@@ -66,20 +68,18 @@ async def patch_layout(job_id: str, body: LayoutPatchRequest):
                     "layer": bp.layer,
                 })
                 new_boxes.append(updated)
-        # Recalculate utilisation
-        pallet_vol = pallet_config["length_mm"] * pallet_config["width_mm"] * pallet_config["max_height_mm"]
+
+        pallet_vol = (pallet_config["length_mm"] * pallet_config["width_mm"]
+                      * pallet_config["max_height_mm"])
         pallet_area = pallet_config["length_mm"] * pallet_config["width_mm"]
         used_vol = sum(b.length_mm * b.width_mm * b.height_mm for b in new_boxes)
         used_area = sum(b.length_mm * b.width_mm for b in new_boxes)
-        vol_util = round(used_vol / pallet_vol * 100, 2) if pallet_vol else 0
-        area_util = round(min(used_area / pallet_area * 100, 100), 2) if pallet_area else 0
-        weight = round(sum(b.weight_kg for b in new_boxes), 3)
 
         adjusted_pallets.append(PalletResult(
             pallet_no=pp.pallet_no,
-            volume_utilisation_pct=vol_util,
-            area_utilisation_pct=area_util,
-            weight_kg=weight,
+            volume_utilisation_pct=round(used_vol / pallet_vol * 100, 2) if pallet_vol else 0,
+            area_utilisation_pct=round(min(used_area / pallet_area * 100, 100), 2) if pallet_area else 0,
+            weight_kg=round(sum(b.weight_kg for b in new_boxes), 3),
             box_count=len(new_boxes),
             boxes=new_boxes,
         ))
@@ -109,12 +109,10 @@ async def get_visualisation(job_id: str):
                 "pallet_no": p.pallet_no,
                 "boxes": [
                     {
-                        "box_id": b.box_id,
-                        "sku": b.sku,
+                        "box_id": b.box_id, "sku": b.sku,
                         "x": b.x_mm, "y": b.y_mm, "z": b.z_mm,
                         "l": b.length_mm, "w": b.width_mm, "h": b.height_mm,
-                        "rotation": b.rotation,
-                        "layer": b.layer,
+                        "rotation": b.rotation, "layer": b.layer,
                     }
                     for b in p.boxes
                 ],

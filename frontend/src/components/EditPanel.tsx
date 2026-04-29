@@ -1,241 +1,230 @@
 "use client";
-import type { BoxResult, PalletResult, AdjustmentValidation } from "@/lib/types";
+import type { BoxResult, PalletResult, LayoutValidationResult, ManualAdjustmentSettings } from "@/lib/types";
 import clsx from "clsx";
 
 interface Props {
-  selectedBox: BoxResult | null;
+  selectedBoxIds: string[];
   selectedPalletIdx: number;
   pallets: PalletResult[];
   palletSpec: { length_mm: number; width_mm: number; max_height_mm: number; max_weight_kg: number };
-  snapGrid: number;
-  validation: AdjustmentValidation | null;
-  canUndo: boolean;
-  canRedo: boolean;
+  settings: ManualAdjustmentSettings;
+  onSettingsChange: (settings: ManualAdjustmentSettings) => void;
+  validation: LayoutValidationResult | null;
   isSaving: boolean;
-  onMove: (boxId: string, palletIdx: number, x: number, y: number, z: number) => void;
-  onRotate: (boxId: string, palletIdx: number) => void;
-  onDelete: (boxId: string, palletIdx: number) => void;
-  onMoveToPallet: (boxId: string, fromIdx: number, toIdx: number) => void;
-  onUndo: () => void;
-  onRedo: () => void;
+  onMove: (boxIds: string[], palletIdx: number, dx: number, dy: number, dz: number) => void;
+  onRotate: (boxIds: string[], palletIdx: number) => void;
+  onStandUpright: (boxId: string, palletIdx: number) => void;
+  onDelete: (boxIds: string[], palletIdx: number) => void;
+  onMoveToPallet: (boxIds: string[], fromIdx: number, toIdx: number) => void;
   onSave: () => void;
-  onReset: () => void;
-  onSnapChange: (v: number) => void;
   onClose: () => void;
 }
 
-function Row({ label, value }: { label: string; value: string | number | undefined }) {
+function Badge({ label, color }: { label: string; color: "red" | "amber" | "blue" | "gray" }) {
+  const cls = {
+    red: "bg-red-100 text-red-700 border-red-200",
+    amber: "bg-amber-100 text-amber-700 border-amber-200",
+    blue: "bg-blue-100 text-blue-700 border-blue-200",
+    gray: "bg-gray-100 text-gray-600 border-gray-200",
+  }[color];
+  return <span className={clsx("text-[10px] font-semibold px-1.5 py-0.5 rounded border", cls)}>{label}</span>;
+}
+
+function Row({ label, value }: { label: string; value: string | number | undefined | null }) {
   if (value === undefined || value === null || value === "") return null;
   return (
     <div className="flex justify-between text-xs py-0.5">
       <span className="text-gray-500">{label}</span>
-      <span className="font-medium text-gray-800 text-right max-w-[60%] truncate">{String(value)}</span>
+      <span className="font-medium text-gray-800 text-right truncate max-w-[55%]">{String(value)}</span>
     </div>
   );
 }
 
-function NumField({
-  label, value, min, max, step, onChange,
-}: {
-  label: string; value: number; min?: number; max?: number; step?: number;
-  onChange: (v: number) => void;
+function ActionBtn({ onClick, children, variant = "default", disabled }: {
+  onClick: () => void; children: React.ReactNode;
+  variant?: "default" | "danger" | "primary"; disabled?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-2">
-      <label className="text-xs text-gray-500 w-6">{label}</label>
-      <input
-        type="number"
-        value={value}
-        min={min}
-        max={max}
-        step={step ?? 1}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-500 outline-none"
-      />
-    </div>
+    <button
+      onClick={onClick} disabled={disabled}
+      className={clsx(
+        "py-1.5 rounded text-xs font-medium border transition-colors disabled:opacity-40",
+        variant === "danger" && "bg-red-50 border-red-200 text-red-700 hover:bg-red-100",
+        variant === "primary" && "bg-blue-600 border-blue-600 text-white hover:bg-blue-700",
+        variant === "default" && "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
 export default function EditPanel({
-  selectedBox, selectedPalletIdx, pallets, palletSpec, snapGrid,
-  validation, canUndo, canRedo, isSaving,
-  onMove, onRotate, onDelete, onMoveToPallet,
-  onUndo, onRedo, onSave, onReset, onSnapChange, onClose,
+  selectedBoxIds, selectedPalletIdx, pallets, palletSpec, settings,
+  onSettingsChange,
+  validation, isSaving,
+  onMove, onRotate, onStandUpright, onDelete, onMoveToPallet, onSave, onClose,
 }: Props) {
-  const box = selectedBox;
+  const currentPallet = pallets[selectedPalletIdx];
+  const selectedBoxes = currentPallet?.boxes.filter((b) => selectedBoxIds.includes(b.box_id)) ?? [];
+  const firstBox: BoxResult | null = selectedBoxes[0] ?? null;
+  const isGroup = selectedBoxes.length > 1;
 
-  const handleCoord = (axis: "x" | "y" | "z", raw: number) => {
-    if (!box) return;
-    const snapped = Math.round(raw / snapGrid) * snapGrid;
-    const x = axis === "x" ? snapped : box.x_mm;
-    const y = axis === "y" ? snapped : box.y_mm;
-    const z = axis === "z" ? snapped : box.z_mm;
-    onMove(box.box_id, selectedPalletIdx, x, y, z);
+  const invalidSet = new Set(validation?.invalidBoxIds ?? []);
+  const hasErrors = validation && validation.errors.length > 0;
+
+  const step = settings.snap_grid_mm;
+  const setSensitivity = (drag_sensitivity: number) => {
+    onSettingsChange({ ...settings, drag_sensitivity });
   };
-
-  const handleLayerUp = () => {
-    if (!box) return;
-    const step = Math.round(box.height_mm / snapGrid) * snapGrid || box.height_mm;
-    onMove(box.box_id, selectedPalletIdx, box.x_mm, box.y_mm, box.z_mm + step);
-  };
-
-  const handleLayerDown = () => {
-    if (!box) return;
-    const step = Math.round(box.height_mm / snapGrid) * snapGrid || box.height_mm;
-    const newZ = Math.max(0, box.z_mm - step);
-    onMove(box.box_id, selectedPalletIdx, box.x_mm, box.y_mm, newZ);
-  };
-
-  const errorMap = new Set<string>();
-  validation?.errors.forEach((e) => { if (box && e.includes(box.box_id)) errorMap.add(e); });
-  const warnMap = new Set<string>();
-  validation?.warnings.forEach((w) => { if (box && w.includes(box.box_id)) warnMap.add(w); });
-
-  const hasBoxError = errorMap.size > 0;
 
   return (
-    <div className="w-72 bg-white border-l border-gray-200 flex flex-col h-full overflow-hidden shadow-xl z-20">
+    <div className="w-68 bg-white border-l border-gray-200 flex flex-col h-full overflow-hidden shadow-xl z-20" style={{ minWidth: 260 }}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
-        <span className="font-semibold text-sm text-gray-800">Edit Mode</span>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 font-bold text-lg leading-none">×</button>
+      <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-200">
+        <div>
+          <span className="font-semibold text-sm text-gray-800">Selected</span>
+          {selectedBoxes.length > 0 && (
+            <span className="ml-2 text-xs text-gray-500">
+              {isGroup ? `${selectedBoxes.length} boxes` : firstBox?.box_id}
+            </span>
+          )}
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-lg leading-none font-bold">×</button>
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {/* Global validation summary */}
+        {/* Validation summary */}
         {validation && (
-          <div className="px-4 pt-3">
+          <div className="px-4 pt-3 space-y-2">
             {validation.errors.length > 0 && (
-              <div className="mb-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700 space-y-0.5">
-                <div className="font-semibold mb-1">Errors ({validation.errors.length})</div>
+              <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700 space-y-0.5">
+                <div className="font-semibold">Errors ({validation.errors.length})</div>
                 {validation.errors.slice(0, 4).map((e, i) => <p key={i}>{e}</p>)}
                 {validation.errors.length > 4 && <p>+{validation.errors.length - 4} more</p>}
               </div>
             )}
             {validation.warnings.length > 0 && (
-              <div className="mb-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700 space-y-0.5">
-                <div className="font-semibold mb-1">Warnings ({validation.warnings.length})</div>
+              <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700 space-y-0.5">
+                <div className="font-semibold">Warnings ({validation.warnings.length})</div>
                 {validation.warnings.slice(0, 3).map((w, i) => <p key={i}>{w}</p>)}
                 {validation.warnings.length > 3 && <p>+{validation.warnings.length - 3} more</p>}
               </div>
             )}
-            {validation.is_valid && validation.errors.length === 0 && (
-              <div className="mb-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700 font-medium">
+            {!hasErrors && validation.errors.length === 0 && (
+              <div className="p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700 font-medium">
                 Layout valid ✓
               </div>
             )}
           </div>
         )}
 
-        {/* Selected box */}
-        {box ? (
-          <div className="px-4 pt-2 pb-3">
+        <div className="px-4 pt-3">
+          <div className="text-xs font-medium text-gray-600 mb-2">Drag sensitivity</div>
+          <div className="grid grid-cols-3 gap-1">
+            {[
+              { label: "Slow", value: 0.2 },
+              { label: "Normal", value: 0.35 },
+              { label: "Fast", value: 0.7 },
+            ].map((option) => (
+              <ActionBtn
+                key={option.value}
+                onClick={() => setSensitivity(option.value)}
+                variant={settings.drag_sensitivity === option.value ? "primary" : "default"}
+              >
+                {option.label}
+              </ActionBtn>
+            ))}
+          </div>
+        </div>
+
+        {selectedBoxes.length === 0 ? (
+          <div className="px-4 py-6 text-center text-xs text-gray-400">
+            Click a box to select it.<br />
+            Use &quot;Select Same SKU&quot; in the toolbar for group selection.
+          </div>
+        ) : (
+          <div className="px-4 pt-3 pb-2 space-y-3">
+            {/* Box info */}
             <div className={clsx(
-              "rounded-lg border p-3 mb-3",
-              hasBoxError ? "border-red-300 bg-red-50" : "border-blue-200 bg-blue-50"
+              "rounded-lg border p-3",
+              selectedBoxes.some(b => invalidSet.has(b.box_id))
+                ? "border-red-300 bg-red-50"
+                : "border-blue-200 bg-blue-50",
             )}>
-              <div className="text-xs font-semibold text-gray-700 mb-2">Selected Box</div>
-              <Row label="Box ID" value={box.box_id} />
-              <Row label="SKU" value={box.sku} />
-              <Row label="Lot No." value={box.lot_no} />
-              <Row label="Pallet" value={`Pallet ${pallets[selectedPalletIdx]?.pallet_no}`} />
-              <Row label="Rotation" value={box.rotation} />
-              <Row label="Layer" value={box.layer} />
-              <Row label="Weight" value={`${box.weight_kg} kg`} />
-              <Row label="L×W×H" value={`${box.length_mm}×${box.width_mm}×${box.height_mm}`} />
+              {isGroup ? (
+                <div className="text-xs font-medium text-gray-700">
+                  Group: {Array.from(new Set(selectedBoxes.map(b => b.sku))).join(", ")}
+                  <span className="ml-2 text-gray-400">({selectedBoxes.length} boxes)</span>
+                </div>
+              ) : firstBox && (
+                <div className="space-y-0.5">
+                  <Row label="SKU" value={firstBox.sku} />
+                  <Row label="Lot No." value={firstBox.lot_no} />
+                  <Row label="Pallet" value={`Pallet ${currentPallet?.pallet_no}`} />
+                  <Row label="L×W×H" value={`${firstBox.length_mm}×${firstBox.width_mm}×${firstBox.height_mm}`} />
+                  <Row label="Weight" value={`${firstBox.weight_kg} kg`} />
+                  <Row label="Rotation" value={firstBox.rotation} />
+                  <Row label="Layer" value={firstBox.layer} />
+                  <Row label="Position" value={`(${firstBox.x_mm}, ${firstBox.y_mm}, ${firstBox.z_mm})`} />
+                  <div className="flex gap-1 flex-wrap mt-1">
+                    {firstBox.stand_upright_only && <Badge label="UPRIGHT ONLY" color="amber" />}
+                    {firstBox.no_load_on_top && <Badge label="NO LOAD ON TOP" color="red" />}
+                    {invalidSet.has(firstBox.box_id) && <Badge label="INVALID" color="red" />}
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Position inputs */}
-            <div className="mb-3">
-              <div className="text-xs font-medium text-gray-600 mb-2">Position (mm)</div>
-              <div className="space-y-1.5">
-                <NumField label="X" value={box.x_mm} min={0} max={palletSpec.length_mm} step={snapGrid}
-                  onChange={(v) => handleCoord("x", v)} />
-                <NumField label="Y" value={box.y_mm} min={0} max={palletSpec.width_mm} step={snapGrid}
-                  onChange={(v) => handleCoord("y", v)} />
-                <NumField label="Z" value={box.z_mm} min={0} max={palletSpec.max_height_mm} step={snapGrid}
-                  onChange={(v) => handleCoord("z", v)} />
+            {/* Move controls */}
+            <div>
+              <div className="text-xs font-medium text-gray-600 mb-2">Move ({step}mm steps)</div>
+              <div className="grid grid-cols-3 gap-1">
+                <ActionBtn onClick={() => onMove(selectedBoxIds, selectedPalletIdx, -step, 0, 0)}>← X</ActionBtn>
+                <ActionBtn onClick={() => onMove(selectedBoxIds, selectedPalletIdx, 0, -step, 0)}>← Y</ActionBtn>
+                <ActionBtn onClick={() => onMove(selectedBoxIds, selectedPalletIdx, 0, 0, step)}>↑ Z</ActionBtn>
+                <ActionBtn onClick={() => onMove(selectedBoxIds, selectedPalletIdx, step, 0, 0)}>X →</ActionBtn>
+                <ActionBtn onClick={() => onMove(selectedBoxIds, selectedPalletIdx, 0, step, 0)}>Y →</ActionBtn>
+                <ActionBtn onClick={() => onMove(selectedBoxIds, selectedPalletIdx, 0, 0, -step)}>↓ Z</ActionBtn>
               </div>
             </div>
 
-            {/* Snap grid */}
-            <div className="mb-3 flex items-center gap-2">
-              <span className="text-xs text-gray-500">Snap grid</span>
-              {[10, 50, 100].map((g) => (
-                <button key={g} onClick={() => onSnapChange(g)}
-                  className={clsx("px-2 py-0.5 rounded text-xs border", snapGrid === g
-                    ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-300")}>
-                  {g}mm
-                </button>
-              ))}
-            </div>
-
-            {/* Per-box errors/warnings */}
-            {hasBoxError && (
-              <div className="mb-2 text-xs text-red-600 space-y-0.5">
-                {Array.from(errorMap).map((e, i) => <p key={i}>⚠ {e}</p>)}
-              </div>
-            )}
-            {warnMap.size > 0 && (
-              <div className="mb-2 text-xs text-yellow-600 space-y-0.5">
-                {Array.from(warnMap).map((w, i) => <p key={i}>⚡ {w}</p>)}
-              </div>
-            )}
-
-            {/* Box action buttons */}
-            <div className="grid grid-cols-2 gap-1.5 mb-3">
-              <button onClick={() => onRotate(box.box_id, selectedPalletIdx)}
-                className="col-span-2 py-1.5 rounded text-xs font-medium bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100">
+            {/* Actions */}
+            <div className="grid grid-cols-2 gap-1">
+              <ActionBtn
+                onClick={() => onRotate(selectedBoxIds, selectedPalletIdx)}
+                disabled={firstBox?.stand_upright_only && selectedBoxes.length === 1 && isGroup === false}
+              >
                 Rotate 90°
-              </button>
-              <button onClick={handleLayerUp}
-                className="py-1.5 rounded text-xs font-medium bg-gray-50 border border-gray-200 hover:bg-gray-100">
-                ↑ Layer Up
-              </button>
-              <button onClick={handleLayerDown}
-                className="py-1.5 rounded text-xs font-medium bg-gray-50 border border-gray-200 hover:bg-gray-100">
-                ↓ Layer Down
-              </button>
+              </ActionBtn>
+              {!isGroup && firstBox && (
+                <ActionBtn onClick={() => onStandUpright(firstBox.box_id, selectedPalletIdx)}>
+                  Stand Upright
+                </ActionBtn>
+              )}
               {pallets.length > 1 && pallets.map((p, idx) => {
                 if (idx === selectedPalletIdx) return null;
                 return (
-                  <button key={idx} onClick={() => onMoveToPallet(box.box_id, selectedPalletIdx, idx)}
-                    className="col-span-2 py-1.5 rounded text-xs font-medium bg-purple-50 border border-purple-200 text-purple-700 hover:bg-purple-100">
-                    Move to Pallet {p.pallet_no}
-                  </button>
+                  <ActionBtn key={idx}
+                    onClick={() => onMoveToPallet(selectedBoxIds, selectedPalletIdx, idx)}>
+                    → Pallet {p.pallet_no}
+                  </ActionBtn>
                 );
               })}
-              <button onClick={() => onDelete(box.box_id, selectedPalletIdx)}
-                className="col-span-2 py-1.5 rounded text-xs font-medium bg-red-50 border border-red-200 text-red-700 hover:bg-red-100">
-                Delete Box
-              </button>
+              <ActionBtn variant="danger" onClick={() => onDelete(selectedBoxIds, selectedPalletIdx)}>
+                {isGroup ? `Delete ${selectedBoxes.length}` : "Delete Box"}
+              </ActionBtn>
             </div>
-          </div>
-        ) : (
-          <div className="px-4 py-6 text-center text-xs text-gray-400">
-            Click a box in the 3D view to select it.
           </div>
         )}
       </div>
 
-      {/* Bottom actions */}
-      <div className="border-t border-gray-200 p-3 space-y-2">
-        <div className="flex gap-1.5">
-          <button onClick={onUndo} disabled={!canUndo}
-            className="flex-1 py-1.5 rounded text-xs font-medium border border-gray-300 disabled:opacity-40 hover:bg-gray-50">
-            ↩ Undo
-          </button>
-          <button onClick={onRedo} disabled={!canRedo}
-            className="flex-1 py-1.5 rounded text-xs font-medium border border-gray-300 disabled:opacity-40 hover:bg-gray-50">
-            ↪ Redo
-          </button>
-        </div>
-        <button onClick={onReset}
-          className="w-full py-1.5 rounded text-xs font-medium border border-gray-300 hover:bg-gray-50 text-gray-600">
-          Reset to Generated
-        </button>
-        <button onClick={onSave} disabled={isSaving}
-          className="w-full py-2 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white transition-colors">
+      {/* Save */}
+      <div className="border-t border-gray-200 p-3">
+        <button
+          onClick={onSave} disabled={isSaving}
+          className="w-full py-2 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white transition-colors"
+        >
           {isSaving ? "Saving…" : "Save Adjusted Layout"}
         </button>
       </div>

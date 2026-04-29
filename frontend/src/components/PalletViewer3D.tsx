@@ -74,25 +74,29 @@ export default function PalletViewer3D({ pallet, palletSpec, layerFilter }: Prop
   const W = palletSpec.width_mm / S;
   const H = palletSpec.max_height_mm / S;
 
+  // Camera looks at the front face of the pallet from a flat front-elevation angle.
+  // Target = centre of pallet face; camera is pulled back along Y, slightly elevated.
+  const cx = L / 2;
+  const cy = W / 2;
+  const cz = H / 2;
+  const dist = Math.max(L, H) * 2.8;
+
   return (
     <div className="relative w-full h-full">
       <Canvas
-        camera={{ position: [L * 2, W * 2, H * 2], fov: 45 }}
+        camera={{ position: [cx, cy - dist, cz], fov: 40, up: [0, 0, 1] }}
         shadows
         style={{ background: "#f8fafc" }}
         onClick={() => setSelected(null)}
       >
         <ambientLight intensity={0.6} />
-        <directionalLight position={[3, 3, 5]} intensity={0.8} castShadow />
+        <directionalLight position={[3, -3, 5]} intensity={0.8} castShadow />
         <PalletBase l={palletSpec.length_mm} w={palletSpec.width_mm} />
-        {/* Pallet border */}
-        <lineSegments>
+        {/* Pallet envelope outline */}
+        <lineSegments position={[cx, cy, cz]}>
           <edgesGeometry args={[new THREE.BoxGeometry(L, W, H)]} />
-          <lineBasicMaterial color="#94a3b8" transparent opacity={0.4} />
+          <lineBasicMaterial color="#94a3b8" transparent opacity={0.35} />
         </lineSegments>
-        <group position={[L / 2, W / 2, H / 2]}>
-          {/* phantom to anchor edges */}
-        </group>
         {visibleBoxes.map((box) => (
           <BoxMesh
             key={box.box_id}
@@ -101,13 +105,29 @@ export default function PalletViewer3D({ pallet, palletSpec, layerFilter }: Prop
             selected={selected?.box_id === box.box_id}
           />
         ))}
-        <OrbitControls ref={controlsRef} makeDefault />
-        <gridHelper args={[2, 10, "#e2e8f0", "#e2e8f0"]} position={[L / 2, W / 2, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <OrbitControls
+          ref={controlsRef}
+          makeDefault
+          target={[cx, cy, cz]}
+          enableDamping
+          dampingFactor={0.08}
+        />
+        <gridHelper
+          args={[Math.max(L, W) * 1.5, 12, "#e2e8f0", "#e2e8f0"]}
+          position={[cx, cy, 0]}
+          rotation={[Math.PI / 2, 0, 0]}
+        />
       </Canvas>
 
       <button
         className="absolute bottom-3 left-3 bg-white border border-gray-300 text-xs px-3 py-1.5 rounded shadow hover:bg-gray-50"
-        onClick={() => controlsRef.current?.reset()}
+        onClick={() => {
+          if (controlsRef.current) {
+            controlsRef.current.object.position.set(cx, cy - dist, cz);
+            controlsRef.current.target.set(cx, cy, cz);
+            controlsRef.current.update();
+          }
+        }}
       >
         Reset Camera
       </button>

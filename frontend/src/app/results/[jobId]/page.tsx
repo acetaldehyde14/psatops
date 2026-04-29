@@ -296,10 +296,7 @@ export default function ResultsPage() {
     setSaveMsg(null);
   };
 
-  if (error) return <div className="p-8 text-red-600">{error}</div>;
-  if (!result) return <div className="p-8 text-gray-500">Loading…</div>;
-
-  const activePallets = editMode ? editedPallets : result.pallets;
+  const activePallets = editMode ? editedPallets : result?.pallets ?? [];
   const pallet = activePallets[selectedPallet];
   const maxLayer = pallet ? Math.max(...pallet.boxes.map((b) => b.layer), 1) : 1;
   const invalidIds = new Set<string>(validation?.invalidBoxIds ?? []);
@@ -310,6 +307,9 @@ export default function ResultsPage() {
     return colors;
   }, [pallet?.boxes]);
   const highlightedSku = legendHoverSku ?? legendSku;
+
+  if (error) return <div className="p-8 text-red-600">{error}</div>;
+  if (!result) return <div className="p-8 text-gray-500">Loading…</div>;
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">

@@ -1,0 +1,54 @@
+"use client";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import {
+  LayoutDashboard,
+  Upload,
+  Settings2,
+  GitCompare,
+  PackageSearch,
+  Box,
+} from "lucide-react";
+import clsx from "clsx";
+
+const NAV = [
+  { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/upload", label: "Upload", icon: Upload },
+  { href: "/optimise", label: "Optimise", icon: PackageSearch },
+  { href: "/compare", label: "Compare", icon: GitCompare },
+  { href: "/settings", label: "Settings", icon: Settings2 },
+];
+
+export default function Sidebar() {
+  const pathname = usePathname();
+  return (
+    <aside className="w-56 min-h-screen bg-gray-900 flex flex-col">
+      <div className="flex items-center gap-2 px-5 py-5 border-b border-gray-700">
+        <Box className="text-blue-400" size={24} />
+        <span className="font-bold text-white text-lg leading-tight">
+          PalletOpt
+        </span>
+      </div>
+      <nav className="flex-1 py-4">
+        {NAV.map(({ href, label, icon: Icon }) => (
+          <Link
+            key={href}
+            href={href}
+            className={clsx(
+              "flex items-center gap-3 px-5 py-3 text-sm font-medium transition-colors",
+              pathname === href
+                ? "bg-blue-600 text-white"
+                : "text-gray-300 hover:bg-gray-800 hover:text-white"
+            )}
+          >
+            <Icon size={18} />
+            {label}
+          </Link>
+        ))}
+      </nav>
+      <div className="px-5 py-4 text-xs text-gray-500 border-t border-gray-700">
+        v1.0.0 — Local Dev
+      </div>
+    </aside>
+  );
+}

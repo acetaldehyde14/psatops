@@ -1,5 +1,7 @@
 "use client";
 import type { BoxResult, PalletResult, LayoutValidationResult, ManualAdjustmentSettings } from "@/lib/types";
+import type { LockedRow } from "@/lib/rowLocking";
+import { isBoxInLockedRow, getLockedRowForBox } from "@/lib/rowLocking";
 import clsx from "clsx";
 
 interface Props {
@@ -11,6 +13,14 @@ interface Props {
   onSettingsChange: (settings: ManualAdjustmentSettings) => void;
   validation: LayoutValidationResult | null;
   isSaving: boolean;
+  // Row locking
+  lockedRows: LockedRow[];
+  onLockRow: () => void;
+  onUnlockRow: (rowId: string) => void;
+  // Compact warnings (cleared on next compact action)
+  compactWarnings: string[];
+  onClearCompactWarnings: () => void;
+  // Existing callbacks
   onMove: (boxIds: string[], palletIdx: number, dx: number, dy: number, dz: number) => void;
   onRotate: (boxIds: string[], palletIdx: number) => void;
   onStandUpright: (boxId: string, palletIdx: number) => void;
@@ -20,12 +30,13 @@ interface Props {
   onClose: () => void;
 }
 
-function Badge({ label, color }: { label: string; color: "red" | "amber" | "blue" | "gray" }) {
+function Badge({ label, color }: { label: string; color: "red" | "amber" | "blue" | "gray" | "purple" }) {
   const cls = {
     red: "bg-red-100 text-red-700 border-red-200",
     amber: "bg-amber-100 text-amber-700 border-amber-200",
     blue: "bg-blue-100 text-blue-700 border-blue-200",
     gray: "bg-gray-100 text-gray-600 border-gray-200",
+    purple: "bg-purple-100 text-purple-700 border-purple-200",
   }[color];
   return <span className={clsx("text-[10px] font-semibold px-1.5 py-0.5 rounded border", cls)}>{label}</span>;
 }
@@ -42,7 +53,7 @@ function Row({ label, value }: { label: string; value: string | number | undefin
 
 function ActionBtn({ onClick, children, variant = "default", disabled }: {
   onClick: () => void; children: React.ReactNode;
-  variant?: "default" | "danger" | "primary"; disabled?: boolean;
+  variant?: "default" | "danger" | "primary" | "purple"; disabled?: boolean;
 }) {
   return (
     <button
@@ -51,6 +62,7 @@ function ActionBtn({ onClick, children, variant = "default", disabled }: {
         "py-1.5 rounded text-xs font-medium border transition-colors disabled:opacity-40",
         variant === "danger" && "bg-red-50 border-red-200 text-red-700 hover:bg-red-100",
         variant === "primary" && "bg-blue-600 border-blue-600 text-white hover:bg-blue-700",
+        variant === "purple" && "bg-purple-600 border-purple-600 text-white hover:bg-purple-700",
         variant === "default" && "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100",
       )}
     >
@@ -63,6 +75,8 @@ export default function EditPanel({
   selectedBoxIds, selectedPalletIdx, pallets, palletSpec, settings,
   onSettingsChange,
   validation, isSaving,
+  lockedRows, onLockRow, onUnlockRow,
+  compactWarnings, onClearCompactWarnings,
   onMove, onRotate, onStandUpright, onDelete, onMoveToPallet, onSave, onClose,
 }: Props) {
   const currentPallet = pallets[selectedPalletIdx];
@@ -77,6 +91,11 @@ export default function EditPanel({
   const setSensitivity = (drag_sensitivity: number) => {
     onSettingsChange({ ...settings, drag_sensitivity });
   };
+
+  // Row lock helpers
+  const firstBoxLocked = firstBox ? isBoxInLockedRow(firstBox.box_id, lockedRows) : false;
+  const firstBoxLockedRow = firstBox ? getLockedRowForBox(firstBox.box_id, lockedRows) : null;
+  const anySelectedLocked = selectedBoxes.some((b) => isBoxInLockedRow(b.box_id, lockedRows));
 
   return (
     <div className="w-68 bg-white border-l border-gray-200 flex flex-col h-full overflow-hidden shadow-xl z-20" style={{ minWidth: 260 }}>
@@ -94,6 +113,17 @@ export default function EditPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        {/* Compact warnings */}
+        {compactWarnings.length > 0 && (
+          <div className="mx-4 mt-3 p-2 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700 space-y-0.5">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold">Compact warnings</span>
+              <button onClick={onClearCompactWarnings} className="text-orange-400 hover:text-orange-700 text-sm leading-none">×</button>
+            </div>
+            {compactWarnings.map((w, i) => <p key={i}>{w}</p>)}
+          </div>
+        )}
+
         {/* Validation summary */}
         {validation && (
           <div className="px-4 pt-3 space-y-2">
@@ -150,12 +180,15 @@ export default function EditPanel({
               "rounded-lg border p-3",
               selectedBoxes.some(b => invalidSet.has(b.box_id))
                 ? "border-red-300 bg-red-50"
+                : anySelectedLocked
+                ? "border-purple-300 bg-purple-50"
                 : "border-blue-200 bg-blue-50",
             )}>
               {isGroup ? (
                 <div className="text-xs font-medium text-gray-700">
                   Group: {Array.from(new Set(selectedBoxes.map(b => b.sku))).join(", ")}
                   <span className="ml-2 text-gray-400">({selectedBoxes.length} boxes)</span>
+                  {anySelectedLocked && <span className="ml-1"><Badge label="ROW LOCKED" color="purple" /></span>}
                 </div>
               ) : firstBox && (
                 <div className="space-y-0.5">
@@ -167,10 +200,14 @@ export default function EditPanel({
                   <Row label="Rotation" value={firstBox.rotation} />
                   <Row label="Layer" value={firstBox.layer} />
                   <Row label="Position" value={`(${firstBox.x_mm}, ${firstBox.y_mm}, ${firstBox.z_mm})`} />
+                  {firstBoxLocked && firstBoxLockedRow && (
+                    <Row label="Row boxes" value={firstBoxLockedRow.boxIds.length} />
+                  )}
                   <div className="flex gap-1 flex-wrap mt-1">
                     {firstBox.stand_upright_only && <Badge label="UPRIGHT ONLY" color="amber" />}
                     {firstBox.no_load_on_top && <Badge label="NO LOAD ON TOP" color="red" />}
                     {invalidSet.has(firstBox.box_id) && <Badge label="INVALID" color="red" />}
+                    {firstBoxLocked && <Badge label="ROW LOCKED" color="purple" />}
                   </div>
                 </div>
               )}
@@ -187,6 +224,35 @@ export default function EditPanel({
                 <ActionBtn onClick={() => onMove(selectedBoxIds, selectedPalletIdx, 0, step, 0)}>Y →</ActionBtn>
                 <ActionBtn onClick={() => onMove(selectedBoxIds, selectedPalletIdx, 0, 0, -step)}>↓ Z</ActionBtn>
               </div>
+            </div>
+
+            {/* Row lock controls */}
+            <div>
+              <div className="text-xs font-medium text-gray-600 mb-2">Row Lock</div>
+              <div className="grid grid-cols-2 gap-1">
+                {!firstBoxLocked ? (
+                  <ActionBtn variant="purple" onClick={onLockRow}>
+                    🔒 Lock Row
+                  </ActionBtn>
+                ) : (
+                  <ActionBtn
+                    variant="default"
+                    onClick={() => firstBoxLockedRow && onUnlockRow(firstBoxLockedRow.id)}
+                  >
+                    🔓 Unlock Row
+                  </ActionBtn>
+                )}
+                <div className="py-1.5 text-xs text-gray-400 flex items-center px-1">
+                  {firstBoxLocked
+                    ? `${firstBoxLockedRow?.boxIds.length ?? 0} boxes locked`
+                    : "Row unlocked"}
+                </div>
+              </div>
+              {lockedRows.length > 0 && (
+                <div className="mt-1 text-[10px] text-purple-600 font-medium">
+                  {lockedRows.length} locked row{lockedRows.length !== 1 ? "s" : ""} on pallet
+                </div>
+              )}
             </div>
 
             {/* Actions */}

@@ -6,7 +6,8 @@ import type { BoxResult, PalletResult, ManualAdjustmentSettings } from "@/lib/ty
 import { getSkuColor } from "@/lib/mockData";
 import BoxInspectorPanel from "./BoxInspectorPanel";
 import LayerGuideGrid, { SCALE } from "./LayerGuideGrid";
-import { applySnappingDetailed, type SnapGuide } from "@/lib/snapping";
+import { applySnappingDetailed, applyMagneticSnap, snapToHorizontalGap, type SnapGuide } from "@/lib/snapping";
+import { isBoxInLockedRow, getMovableSelection, type LockedRow } from "@/lib/rowLocking";
 import { validateBoxesLightweight, validateLayout } from "@/lib/layoutValidation";
 import * as THREE from "three";
 
@@ -22,11 +23,16 @@ interface Props {
   colorBySku?: Record<string, string>;
   snapToBoxEdges?: boolean;
   snapToThreshold?: boolean;
+  unlockedMode?: boolean;
+  magneticSnapEnabled?: boolean;
+  magneticSnapStrength?: number;
+  lockedRows?: LockedRow[];
   onBoxClick?: (box: BoxResult, multi: boolean) => void;
   onBoxDragEnd?: (moves: Array<{ box_id: string; x: number; y: number }>) => void;
 }
 
-type PreviewPosition = { x: number; y: number; valid: boolean };
+type PreviewStatus = "valid" | "invalid" | "snapped";
+type PreviewPosition = { x: number; y: number; status: PreviewStatus };
 
 interface BoxPreviewController {
   setPreview: (preview: PreviewPosition) => void;
@@ -40,6 +46,7 @@ interface DragSession {
   dragStartPalletPoint: { x: number; y: number };
   startPositions: Map<string, { x: number; y: number }>;
   lastValid: Map<string, { x: number; y: number }>;
+  previewIds: Set<string>;
   latestPointMm: { x: number; y: number } | null;
 }
 
@@ -51,6 +58,14 @@ function intersectPlanePoint(
   const hit = new THREE.Vector3();
   if (!event.ray.intersectPlane(plane, hit)) return null;
   return { x: hit.x / SCALE, y: hit.y / SCALE };
+}
+
+function boxesOverlapMm(a: BoxResult, b: BoxResult, eps = 0.5): boolean {
+  return (
+    a.x_mm < b.x_mm + b.length_mm - eps && a.x_mm + a.length_mm > b.x_mm + eps &&
+    a.y_mm < b.y_mm + b.width_mm - eps && a.y_mm + a.width_mm > b.y_mm + eps &&
+    a.z_mm < b.z_mm + b.height_mm - eps && a.z_mm + a.height_mm > b.z_mm + eps
+  );
 }
 
 // ── Pallet base + ghost outline ───────────────────────────────────────────────
@@ -103,6 +118,7 @@ interface BoxMeshProps {
   editMode: boolean;
   orbitActive: boolean;
   colorBySku?: Record<string, string>;
+  isLockedRow: boolean;
   registerController: (boxId: string, controller: BoxPreviewController | null) => void;
   onHoverChange: (boxId: string | null) => void;
   onPointerDown: (e: ThreeEvent<PointerEvent>, box: BoxResult) => void;
@@ -112,7 +128,8 @@ interface BoxMeshProps {
 }
 
 const BoxMesh = memo(function BoxMesh({
-  box, selected, hovered, invalid, legendHighlighted, editMode, orbitActive, colorBySku, registerController,
+  box, selected, hovered, invalid, legendHighlighted, editMode, orbitActive, colorBySku,
+  isLockedRow, registerController,
   onHoverChange,
   onPointerDown, onDragMove, onDragUp, onClick,
 }: BoxMeshProps) {
@@ -122,8 +139,8 @@ const BoxMesh = memo(function BoxMesh({
   const materialRef = useRef<THREE.MeshStandardMaterial>(null);
   const skuColor = useMemo(() => colorBySku?.[box.sku] ?? getSkuColor(box.sku), [box.sku, colorBySku]);
   const baseColor = invalid ? "#ef4444" : skuColor;
-  const showOutline = invalid || selected || hovered || legendHighlighted;
-  const outlineColor = invalid ? "#ef4444" : selected ? "#2563eb" : "#f59e0b";
+  const showOutline = invalid || selected || hovered || legendHighlighted || isLockedRow;
+  const outlineColor = invalid ? "#ef4444" : selected ? "#2563eb" : isLockedRow ? "#9333ea" : "#f59e0b";
 
   const px = (box.x_mm + box.length_mm / 2) * SCALE;
   const py = (box.y_mm + box.width_mm / 2) * SCALE;
@@ -141,13 +158,13 @@ const BoxMesh = memo(function BoxMesh({
     [box.height_mm, box.length_mm, box.width_mm],
   );
 
-  const applyMaterial = useCallback((previewValid?: boolean) => {
+  const applyMaterial = useCallback((previewStatus?: PreviewStatus) => {
     const material = materialRef.current;
     if (!material) return;
-    const isPreviewInvalid = previewValid === false;
-    const color = isPreviewInvalid ? "#ef4444" : baseColor;
+    const isPreviewInvalid = previewStatus === "invalid";
+    const color = previewStatus === "snapped" ? "#2563eb" : previewStatus === "valid" ? "#22c55e" : isPreviewInvalid ? "#ef4444" : baseColor;
     material.color.set(color);
-    material.opacity = previewValid === undefined ? (hovered || selected ? 1.0 : 0.82) : 0.68;
+    material.opacity = previewStatus === undefined ? (hovered || selected ? 1.0 : 0.82) : 0.54;
     material.transparent = material.opacity < 1;
     material.emissive.set(
       isPreviewInvalid || invalid ? "#ef4444" : selected ? color : legendHighlighted || hovered ? "#f59e0b" : "#000000",
@@ -175,7 +192,7 @@ const BoxMesh = memo(function BoxMesh({
     const controller: BoxPreviewController = {
       setPreview: (preview) => {
         setRenderedPosition(preview.x, preview.y);
-        applyMaterial(preview.valid);
+        applyMaterial(preview.status);
       },
       clearPreview: () => {
         setRenderedPosition(box.x_mm, box.y_mm);
@@ -277,11 +294,16 @@ export default function PalletViewer3D({
   colorBySku,
   snapToBoxEdges = false,
   snapToThreshold = false,
+  unlockedMode = false,
+  magneticSnapEnabled = false,
+  magneticSnapStrength = 0.65,
+  lockedRows = [],
   onBoxClick,
   onBoxDragEnd,
 }: Props) {
   const [viewSelected, setViewSelected] = useState<BoxResult | null>(null);
   const [orbitActive, setOrbitActive] = useState(false);
+  const [altUnlocked, setAltUnlocked] = useState(false);
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
   const [hoveredBoxId, setHoveredBoxId] = useState<string | null>(null);
   const controlsRef = useRef<any>(null);
@@ -317,6 +339,7 @@ export default function PalletViewer3D({
     if (layerBoxes.length > 0) return Math.min(...layerBoxes.map((box) => box.z_mm));
     return 0;
   }, [editMode, layerFilter, pallet.boxes]);
+  const effectiveUnlocked = unlockedMode || altUnlocked;
 
   const resetCamera = useCallback((view: "top" | "front" | "right" | "iso" = "iso") => {
     if (!controlsRef.current) return;
@@ -339,17 +362,22 @@ export default function PalletViewer3D({
         e.preventDefault();
         setOrbitActive(true);
       }
+      if (e.altKey) setAltUnlocked(true);
     };
     const up = (e: KeyboardEvent) => {
       if (e.code === "Space") {
         setOrbitActive(false);
       }
+      if (e.key === "Alt") setAltUnlocked(false);
     };
+    const blur = () => setAltUnlocked(false);
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
+    window.addEventListener("blur", blur);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", blur);
     };
   }, [editMode]);
 
@@ -374,7 +402,13 @@ export default function PalletViewer3D({
 
     const candidateBoxes = selectedBoxes.map((box) => {
       const start = session.startPositions.get(box.box_id) ?? { x: box.x_mm, y: box.y_mm };
-      return { ...box, x_mm: Math.round(start.x + dx), y_mm: Math.round(start.y + dy) };
+      const x = start.x + dx;
+      const y = start.y + dy;
+      return {
+        ...box,
+        x_mm: effectiveUnlocked ? x : Math.round(x),
+        y_mm: effectiveUnlocked ? y : Math.round(y),
+      };
     });
 
     const minX = Math.min(...candidateBoxes.map((box) => box.x_mm));
@@ -382,27 +416,73 @@ export default function PalletViewer3D({
     const maxX = Math.max(...candidateBoxes.map((box) => box.x_mm + box.length_mm));
     const maxY = Math.max(...candidateBoxes.map((box) => box.y_mm + box.width_mm));
     const nonSelected = pallet.boxes.filter((box) => !session.startPositions.has(box.box_id));
-    const snapped = applySnappingDetailed(
-      { x: minX, y: minY },
-      { x: minX, y: minY, l: maxX - minX, w: maxY - minY },
-      nonSelected.map((box) => ({ x: box.x_mm, y: box.y_mm, l: box.length_mm, w: box.width_mm })),
+    const movingRect = { x: minX, y: minY, l: maxX - minX, w: maxY - minY };
+
+    if (effectiveUnlocked) {
+      const validation = validateBoxesLightweight(
+        candidateBoxes,
+        nonSelected,
+        {
+          length_mm: palletSpec.length_mm,
+          width_mm: palletSpec.width_mm,
+          max_height_mm: palletSpec.max_height_mm,
+        },
+        settings,
+        { overlapToleranceMm: 2 },
+      );
+      return { boxes: candidateBoxes, validation, guides: [], status: validation.isValid ? "valid" as const : "invalid" as const };
+    }
+
+    const otherRects = nonSelected.map((box) => ({ x: box.x_mm, y: box.y_mm, l: box.length_mm, w: box.width_mm }));
+    const snapped = magneticSnapEnabled
+      ? applyMagneticSnap(
+          { x: minX, y: minY },
+          movingRect,
+          otherRects,
+          palletSpec,
+          {
+            magneticSnapEnabled: true,
+            magneticSnapRadiusMm: 60,
+            magneticSnapStrength,
+            hardSnapRadiusMm: 8,
+            snapGrid: settings.snap_grid_mm,
+            snapToBoxEdges,
+            snapToThreshold,
+            thresholds: { length_mm: settings.edge_threshold_length_mm, width_mm: settings.edge_threshold_width_mm },
+          },
+        )
+      : applySnappingDetailed(
+          { x: minX, y: minY },
+          movingRect,
+          otherRects,
+          palletSpec,
+          { length_mm: settings.edge_threshold_length_mm, width_mm: settings.edge_threshold_width_mm },
+          {
+            snapGrid: settings.snap_grid_mm,
+            snapToBoxEdges,
+            snapToThreshold,
+            tolerance: 25,
+          },
+        );
+    const gapSnapped = snapToHorizontalGap(
+      { x: snapped.x, y: snapped.y },
+      { ...movingRect, x: snapped.x, y: snapped.y },
+      nonSelected
+        .filter((box) => Math.abs(box.z_mm - selectedBoxes[0].z_mm) < 1)
+        .map((box) => ({ x: box.x_mm, y: box.y_mm, l: box.length_mm, w: box.width_mm })),
       palletSpec,
       { length_mm: settings.edge_threshold_length_mm, width_mm: settings.edge_threshold_width_mm },
-      {
-        snapGrid: settings.snap_grid_mm,
-        snapToBoxEdges,
-        snapToThreshold,
-        tolerance: 25,
-      },
+      40,
     );
-    const snapDx = snapped.x - minX;
-    const snapDy = snapped.y - minY;
-    const snappedBoxes = candidateBoxes.map((box) => ({
+    const finalSnap = gapSnapped.snappedToGap ? gapSnapped : snapped;
+    const snapDx = finalSnap.x - minX;
+    const snapDy = finalSnap.y - minY;
+    let snappedBoxes = candidateBoxes.map((box) => ({
       ...box,
       x_mm: Math.round(box.x_mm + snapDx),
       y_mm: Math.round(box.y_mm + snapDy),
     }));
-    const validation = validateBoxesLightweight(
+    let validation = validateBoxesLightweight(
       snappedBoxes,
       nonSelected,
       {
@@ -411,10 +491,46 @@ export default function PalletViewer3D({
         max_height_mm: palletSpec.max_height_mm,
       },
       settings,
+      { overlapToleranceMm: 2 },
     );
 
-    return { boxes: snappedBoxes, validation, guides: snapped.guides };
-  }, [boxById, pallet.boxes, palletSpec, settings, snapToBoxEdges, snapToThreshold]);
+    const overlapNeighbours = nonSelected.filter((box) => (
+      Math.abs(box.z_mm - snappedBoxes[0].z_mm) < 1 &&
+      snappedBoxes.some((moving) => boxesOverlapMm(moving, box, 2))
+    ));
+    if (!validation.isValid && snappedBoxes.length === 1 && overlapNeighbours.length === 1) {
+      const moving = snappedBoxes[0];
+      const neighbour = overlapNeighbours[0];
+      const shiftDirection = moving.x_mm + moving.length_mm / 2 <= neighbour.x_mm + neighbour.length_mm / 2 ? 1 : -1;
+      const shiftedNeighbour = {
+        ...neighbour,
+        x_mm: neighbour.x_mm + shiftDirection * moving.length_mm,
+      };
+      const rest = nonSelected.filter((box) => box.box_id !== neighbour.box_id);
+      const shiftedValidation = validateBoxesLightweight(
+        [moving, shiftedNeighbour],
+        rest,
+        {
+          length_mm: palletSpec.length_mm,
+          width_mm: palletSpec.width_mm,
+          max_height_mm: palletSpec.max_height_mm,
+        },
+        settings,
+        { overlapToleranceMm: 2 },
+      );
+      if (shiftedValidation.isValid) {
+        snappedBoxes = [moving, shiftedNeighbour];
+        validation = shiftedValidation;
+      }
+    }
+
+    return {
+      boxes: snappedBoxes,
+      validation,
+      guides: [...snapped.guides, ...gapSnapped.guides],
+      status: !validation.isValid ? "invalid" as const : snapped.guides.length > 0 || gapSnapped.guides.length > 0 ? "snapped" as const : "valid" as const,
+    };
+  }, [boxById, effectiveUnlocked, pallet.boxes, palletSpec, settings, snapToBoxEdges, snapToThreshold]);
 
   const flushDragPreview = useCallback(() => {
     dragFrame.current = null;
@@ -424,11 +540,18 @@ export default function PalletViewer3D({
     const candidate = buildCandidate(session, session.latestPointMm);
     if (!candidate) return;
 
+    for (const id of Array.from(session.previewIds)) {
+      if (!candidate.boxes.some((box) => box.box_id === id)) {
+        boxControllers.current.get(id)?.clearPreview();
+      }
+    }
+    session.previewIds = new Set(candidate.boxes.map((box) => box.box_id));
+
     for (const box of candidate.boxes) {
       boxControllers.current.get(box.box_id)?.setPreview({
         x: box.x_mm,
         y: box.y_mm,
-        valid: candidate.validation.isValid,
+        status: candidate.status,
       });
     }
     setSnapGuides(candidate.guides);
@@ -457,9 +580,16 @@ export default function PalletViewer3D({
     const hit = intersectPlanePoint(e, box.z_mm);
     if (!hit) return;
 
-    const ids = selectedBoxIds.has(box.box_id)
+    let ids = selectedBoxIds.has(box.box_id)
       ? Array.from(selectedBoxIds)
       : [box.box_id];
+
+    // Expand selection to entire locked row so the row moves as a unit
+    if (lockedRows.length > 0) {
+      const { boxIds: expandedIds } = getMovableSelection(box.box_id, ids, lockedRows);
+      ids = expandedIds.filter((id) => pallet.boxes.some((b) => b.box_id === id));
+    }
+
     const startMap = new Map<string, { x: number; y: number }>();
     for (const id of ids) {
       const b = pallet.boxes.find((b) => b.box_id === id);
@@ -472,6 +602,7 @@ export default function PalletViewer3D({
       dragStartPalletPoint: hit,
       startPositions: startMap,
       lastValid: new Map(startMap),
+      previewIds: new Set(),
       latestPointMm: hit,
     };
     setDragPlaneZ(box.z_mm * SCALE);
@@ -539,7 +670,7 @@ export default function PalletViewer3D({
 
     dragSession.current = null;
     setDragPlaneZ(null);
-    for (const id of session.ids) boxControllers.current.get(id)?.clearPreview();
+    for (const id of Array.from(session.previewIds)) boxControllers.current.get(id)?.clearPreview();
     setSnapGuides([]);
 
     if (moves.length > 0) {
@@ -599,7 +730,13 @@ export default function PalletViewer3D({
             <Line
               key={`${guide.axis}-${guide.value}-${guide.source}-${index}`}
               points={points}
-              color={guide.source === "box" ? "#2563eb" : "#f59e0b"}
+              color={
+                guide.source === "gap"
+                  ? (guide.magnetic ? "#86efac" : "#22c55e")
+                  : guide.source === "box"
+                  ? (guide.magnetic ? "#93c5fd" : "#2563eb")
+                  : (guide.magnetic ? "#94a3b8" : "#f59e0b")
+              }
               lineWidth={2}
               transparent
               opacity={0.8}
@@ -618,23 +755,24 @@ export default function PalletViewer3D({
 
         {/* Box meshes */}
         {visibleBoxes.map((box) => (
-                <BoxMesh
-              key={box.box_id}
-              box={box}
-              selected={editMode ? selectedBoxIds.has(box.box_id) : viewSelected?.box_id === box.box_id}
-              hovered={hoveredBoxId === box.box_id}
-              invalid={invalidBoxIds.has(box.box_id)}
-              legendHighlighted={highlightedSku === box.sku}
-              editMode={editMode}
-              orbitActive={orbitActive}
-              colorBySku={colorBySku}
-              registerController={registerBoxController}
-              onHoverChange={handleHoverChange}
-              onPointerDown={handlePointerDown}
-              onDragMove={handleDragMove}
-              onDragUp={handleDragUp}
-              onClick={handleBoxClick}
-            />
+          <BoxMesh
+            key={box.box_id}
+            box={box}
+            selected={editMode ? selectedBoxIds.has(box.box_id) : viewSelected?.box_id === box.box_id}
+            hovered={hoveredBoxId === box.box_id}
+            invalid={invalidBoxIds.has(box.box_id)}
+            legendHighlighted={highlightedSku === box.sku}
+            isLockedRow={isBoxInLockedRow(box.box_id, lockedRows)}
+            editMode={editMode}
+            orbitActive={orbitActive}
+            colorBySku={colorBySku}
+            registerController={registerBoxController}
+            onHoverChange={handleHoverChange}
+            onPointerDown={handlePointerDown}
+            onDragMove={handleDragMove}
+            onDragUp={handleDragUp}
+            onClick={handleBoxClick}
+          />
         ))}
 
         <SpacebarOrbit
@@ -652,7 +790,7 @@ export default function PalletViewer3D({
 
       {editMode && (
         <div className={`absolute top-2 left-2 text-xs px-2 py-1 rounded font-medium pointer-events-none ${orbitActive ? "bg-amber-400 text-amber-900" : "bg-blue-600 text-white"}`}>
-          {orbitActive ? "Orbit: release Space to drag" : "2D Adjust Mode: drag on pallet plane"}
+          {orbitActive ? "Orbit: release Space to drag" : effectiveUnlocked ? "Unlocked Mode: free move" : "Locked Mode: snap + gap insert"}
         </div>
       )}
 

@@ -9,14 +9,28 @@ interface Props {
   selectionMode: SelectionMode;
   snapToBoxEdges: boolean;
   snapToThreshold: boolean;
+  unlockedMode: boolean;
   canUndo: boolean;
   canRedo: boolean;
   isSaving: boolean;
   isOrbitActive: boolean;
+  // Compact
+  canCompactRow: boolean;
+  canCompactLayer: boolean;
+  onCompactRow: () => void;
+  onCompactLayer: () => void;
+  onCompactPallet: () => void;
+  // Magnetic snap
+  magneticSnapEnabled: boolean;
+  magneticSnapStrength: number;
+  onToggleMagneticSnap: () => void;
+  onSetMagneticSnapStrength: (v: number) => void;
+  // Existing callbacks
   onSettingsChange: (s: ManualAdjustmentSettings) => void;
   onSelectionModeChange: (m: SelectionMode) => void;
   onSnapToBoxEdgesChange: (v: boolean) => void;
   onSnapToThresholdChange: (v: boolean) => void;
+  onUnlockedModeChange: (v: boolean) => void;
   onUndo: () => void;
   onRedo: () => void;
   onReset: () => void;
@@ -25,10 +39,11 @@ interface Props {
 }
 
 function Btn({
-  active, disabled, onClick, children, color = "default",
+  active, disabled, onClick, children, color = "default", title,
 }: {
   active?: boolean; disabled?: boolean; onClick?: () => void;
-  children: React.ReactNode; color?: "default" | "blue" | "red" | "green";
+  children: React.ReactNode; color?: "default" | "blue" | "red" | "green" | "purple";
+  title?: string;
 }) {
   const base = "px-3 py-1.5 rounded text-xs font-medium border transition-colors disabled:opacity-40";
   const variants = {
@@ -36,18 +51,29 @@ function Btn({
     blue: active ? "bg-blue-600 text-white border-blue-600" : "bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100",
     red: "bg-red-50 text-red-700 border-red-200 hover:bg-red-100",
     green: "bg-green-600 text-white border-green-600 hover:bg-green-700",
+    purple: active ? "bg-purple-600 text-white border-purple-600" : "bg-purple-50 text-purple-700 border-purple-300 hover:bg-purple-100",
   };
   return (
-    <button className={clsx(base, variants[color])} disabled={disabled} onClick={onClick}>
+    <button title={title} className={clsx(base, variants[color])} disabled={disabled} onClick={onClick}>
       {children}
     </button>
   );
 }
 
+const SNAP_STRENGTH_OPTIONS = [
+  { label: "Gentle", value: 0.35 },
+  { label: "Normal", value: 0.65 },
+  { label: "Strong", value: 0.9 },
+] as const;
+
 export default function ManualAdjustToolbar({
-  settings, selectionMode, snapToBoxEdges, snapToThreshold,
+  settings, selectionMode, snapToBoxEdges, snapToThreshold, unlockedMode,
   canUndo, canRedo, isSaving, isOrbitActive,
-  onSettingsChange, onSelectionModeChange, onSnapToBoxEdgesChange, onSnapToThresholdChange,
+  canCompactRow, canCompactLayer,
+  magneticSnapEnabled, magneticSnapStrength,
+  onSettingsChange, onSelectionModeChange, onSnapToBoxEdgesChange, onSnapToThresholdChange, onUnlockedModeChange,
+  onCompactRow, onCompactLayer, onCompactPallet,
+  onToggleMagneticSnap, onSetMagneticSnapStrength,
   onUndo, onRedo, onReset, onSave, onExit,
 }: Props) {
   const upd = (k: keyof ManualAdjustmentSettings, v: number) =>
@@ -75,20 +101,30 @@ export default function ManualAdjustToolbar({
 
       <div className="w-px h-5 bg-indigo-700" />
 
+      <Btn active={!unlockedMode} onClick={() => onUnlockedModeChange(false)}>
+        Locked
+      </Btn>
+      <Btn active={unlockedMode} onClick={() => onUnlockedModeChange(true)}>
+        Unlocked
+      </Btn>
+
+      <div className="w-px h-5 bg-indigo-700" />
+
       {/* Snap grid */}
       <span className="text-xs text-indigo-300">Grid:</span>
       {([10, 50, 100] as const).map((g) => (
         <Btn key={g} active={settings.snap_grid_mm === g}
+          disabled={unlockedMode}
           onClick={() => upd("snap_grid_mm", g)}>
           {g}mm
         </Btn>
       ))}
 
       {/* Snap toggles */}
-      <Btn active={snapToBoxEdges} onClick={() => onSnapToBoxEdgesChange(!snapToBoxEdges)}>
+      <Btn active={snapToBoxEdges} disabled={unlockedMode} onClick={() => onSnapToBoxEdgesChange(!snapToBoxEdges)}>
         Snap→Box
       </Btn>
-      <Btn active={snapToThreshold} onClick={() => onSnapToThresholdChange(!snapToThreshold)}>
+      <Btn active={snapToThreshold} disabled={unlockedMode} onClick={() => onSnapToThresholdChange(!snapToThreshold)}>
         Snap→Edge
       </Btn>
 
@@ -112,6 +148,51 @@ export default function ManualAdjustToolbar({
 
       <div className="w-px h-5 bg-indigo-700" />
 
+      {/* Auto Compact */}
+      <span className="text-xs text-indigo-300">Compact:</span>
+      <Btn
+        disabled={!canCompactRow}
+        onClick={onCompactRow}
+        title="Repack the selected row flush along X"
+      >
+        Row
+      </Btn>
+      <Btn
+        disabled={!canCompactLayer}
+        onClick={onCompactLayer}
+        title="Repack all rows on the active layer"
+      >
+        Layer
+      </Btn>
+      <Btn onClick={onCompactPallet} title="Compact every layer on this pallet">
+        Pallet
+      </Btn>
+
+      <div className="w-px h-5 bg-indigo-700" />
+
+      {/* Magnetic snap */}
+      <Btn
+        active={magneticSnapEnabled}
+        color="purple"
+        disabled={unlockedMode}
+        onClick={onToggleMagneticSnap}
+        title="Replace hard grid snap with smooth magnetic attraction"
+      >
+        ⊕ Mag.Snap
+      </Btn>
+      {magneticSnapEnabled && !unlockedMode && SNAP_STRENGTH_OPTIONS.map((opt) => (
+        <Btn
+          key={opt.value}
+          active={magneticSnapStrength === opt.value}
+          color="purple"
+          onClick={() => onSetMagneticSnapStrength(opt.value)}
+        >
+          {opt.label}
+        </Btn>
+      ))}
+
+      <div className="w-px h-5 bg-indigo-700" />
+
       {/* History */}
       <Btn disabled={!canUndo} onClick={onUndo}>↩ Undo</Btn>
       <Btn disabled={!canRedo} onClick={onRedo}>↪ Redo</Btn>
@@ -125,7 +206,7 @@ export default function ManualAdjustToolbar({
       <Btn onClick={onExit}>Exit Edit</Btn>
 
       <span className="text-xs text-indigo-400 ml-auto hidden lg:block">
-        Hold Space = orbit • Drag = X/Y only
+        Hold Alt = temp unlocked • Hold Space = orbit
       </span>
     </div>
   );

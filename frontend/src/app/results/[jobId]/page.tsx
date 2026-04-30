@@ -13,6 +13,16 @@ import ManualAdjustToolbar from "@/components/ManualAdjustToolbar";
 import type { SelectionMode } from "@/components/ManualAdjustToolbar";
 import SkuLegend from "@/components/SkuLegend";
 import { validateLayout } from "@/lib/layoutValidation";
+import {
+  compactRow as compactRowLayout,
+  compactLayer as compactLayerLayout,
+  compactPallet as compactPalletLayout,
+} from "@/lib/compactLayout";
+import {
+  createLockedRow,
+  unlockRow as unlockRowFn,
+  type LockedRow,
+} from "@/lib/rowLocking";
 import { getSkuColor } from "@/lib/mockData";
 import dynamic from "next/dynamic";
 import clsx from "clsx";
@@ -65,6 +75,11 @@ export default function ResultsPage() {
   const [settings, setSettings] = useState<ManualAdjustmentSettings>(DEFAULT_SETTINGS);
   const [snapToBoxEdges, setSnapToBoxEdges] = useState(false);
   const [snapToThreshold, setSnapToThreshold] = useState(true);
+  const [unlockedMode, setUnlockedMode] = useState(false);
+  const [magneticSnapEnabled, setMagneticSnapEnabled] = useState(false);
+  const [magneticSnapStrength, setMagneticSnapStrength] = useState(0.65);
+  const [lockedRows, setLockedRows] = useState<LockedRow[]>([]);
+  const [compactWarnings, setCompactWarnings] = useState<string[]>([]);
   const [validation, setValidation] = useState<LayoutValidationResult | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
@@ -241,6 +256,74 @@ export default function ResultsPage() {
     setValidation(null);
   }, [originalPallets]);
 
+  // ── Auto compact ─────────────────────────────────────────────────────────────
+  const handleCompactRow = useCallback(() => {
+    if (selectedBoxIds.size === 0) return;
+    const firstBoxId = Array.from(selectedBoxIds)[0];
+    const result = compactRowLayout(editedPallets, firstBoxId, settings, PALLET_SPEC, lockedRows);
+    if (result.warnings.length > 0 && result.changedBoxIds.length === 0) {
+      setCompactWarnings(result.warnings);
+      return;
+    }
+    const check = validateLayout(result.layout, PALLET_SPEC, settings);
+    if (!check.isValid) {
+      setCompactWarnings(["Compact Row produced an invalid layout — not applied."]);
+      return;
+    }
+    pushHistory(editedPallets);
+    setEditedPallets(result.layout);
+    setCompactWarnings(result.warnings);
+  }, [selectedBoxIds, editedPallets, settings, lockedRows, pushHistory]);
+
+  const handleCompactLayer = useCallback(() => {
+    if (layerFilter === null) {
+      setCompactWarnings(["Select a layer first to use Compact Layer."]);
+      return;
+    }
+    const pallet = editedPallets[selectedPallet];
+    if (!pallet) return;
+    const result = compactLayerLayout(editedPallets, pallet.pallet_no, layerFilter, settings, PALLET_SPEC, lockedRows);
+    const check = validateLayout(result.layout, PALLET_SPEC, settings);
+    if (!check.isValid) {
+      setCompactWarnings(["Compact Layer produced an invalid layout — not applied."]);
+      return;
+    }
+    pushHistory(editedPallets);
+    setEditedPallets(result.layout);
+    setCompactWarnings(result.warnings);
+  }, [layerFilter, editedPallets, selectedPallet, settings, lockedRows, pushHistory]);
+
+  const handleCompactPallet = useCallback(() => {
+    const pallet = editedPallets[selectedPallet];
+    if (!pallet) return;
+    const result = compactPalletLayout(editedPallets, pallet.pallet_no, settings, PALLET_SPEC, lockedRows);
+    const check = validateLayout(result.layout, PALLET_SPEC, settings);
+    if (!check.isValid) {
+      setCompactWarnings(["Compact Pallet produced an invalid layout — not applied."]);
+      return;
+    }
+    pushHistory(editedPallets);
+    setEditedPallets(result.layout);
+    setCompactWarnings(result.warnings);
+  }, [editedPallets, selectedPallet, settings, lockedRows, pushHistory]);
+
+  // ── Row locking ────────────────────────────────────────────────────────────
+  const handleLockRow = useCallback(() => {
+    if (selectedBoxIds.size === 0) return;
+    const firstBoxId = Array.from(selectedBoxIds)[0];
+    const newRow = createLockedRow(editedPallets, firstBoxId);
+    if (newRow) setLockedRows((prev) => [...prev, newRow]);
+  }, [selectedBoxIds, editedPallets]);
+
+  const handleUnlockRow = useCallback((rowId: string) => {
+    setLockedRows((prev) => unlockRowFn(rowId, prev));
+  }, []);
+
+  // ── Magnetic snap ──────────────────────────────────────────────────────────
+  const handleToggleMagneticSnap = useCallback(() => {
+    setMagneticSnapEnabled((v) => !v);
+  }, []);
+
   // ── Save ──────────────────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
     if (!result) return;
@@ -357,14 +440,25 @@ export default function ResultsPage() {
           selectionMode={selectionMode}
           snapToBoxEdges={snapToBoxEdges}
           snapToThreshold={snapToThreshold}
+          unlockedMode={unlockedMode}
           canUndo={history.length > 0}
           canRedo={future.length > 0}
           isSaving={isSaving}
           isOrbitActive={false}
+          canCompactRow={selectedBoxIds.size > 0}
+          canCompactLayer={layerFilter !== null}
+          magneticSnapEnabled={magneticSnapEnabled}
+          magneticSnapStrength={magneticSnapStrength}
           onSettingsChange={setSettings}
           onSelectionModeChange={setSelectionMode}
           onSnapToBoxEdgesChange={setSnapToBoxEdges}
           onSnapToThresholdChange={setSnapToThreshold}
+          onUnlockedModeChange={setUnlockedMode}
+          onCompactRow={handleCompactRow}
+          onCompactLayer={handleCompactLayer}
+          onCompactPallet={handleCompactPallet}
+          onToggleMagneticSnap={handleToggleMagneticSnap}
+          onSetMagneticSnapStrength={setMagneticSnapStrength}
           onUndo={handleUndo}
           onRedo={handleRedo}
           onReset={handleReset}
@@ -450,6 +544,10 @@ export default function ResultsPage() {
                     colorBySku={colorBySku}
                     snapToBoxEdges={snapToBoxEdges}
                     snapToThreshold={snapToThreshold}
+                    unlockedMode={unlockedMode}
+                    magneticSnapEnabled={magneticSnapEnabled && !unlockedMode}
+                    magneticSnapStrength={magneticSnapStrength}
+                    lockedRows={lockedRows}
                     onBoxClick={editMode ? handleBoxClick : undefined}
                     onBoxDragEnd={editMode ? handleBoxDragEnd : undefined}
                   />
@@ -483,6 +581,11 @@ export default function ResultsPage() {
             onSettingsChange={setSettings}
             validation={validation}
             isSaving={isSaving}
+            lockedRows={lockedRows}
+            onLockRow={handleLockRow}
+            onUnlockRow={handleUnlockRow}
+            compactWarnings={compactWarnings}
+            onClearCompactWarnings={() => setCompactWarnings([])}
             onMove={handleMove}
             onRotate={handleRotate}
             onStandUpright={handleStandUpright}

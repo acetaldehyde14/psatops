@@ -16,11 +16,11 @@ function xyOverlapArea(
   return ox > 0 && oy > 0 ? ox * oy : 0;
 }
 
-function boxesOverlap(a: BoxResult, b: BoxResult): boolean {
+function boxesOverlap(a: BoxResult, b: BoxResult, eps = EPS): boolean {
   return (
-    a.x_mm < b.x_mm + b.length_mm - EPS && a.x_mm + a.length_mm > b.x_mm + EPS &&
-    a.y_mm < b.y_mm + b.width_mm - EPS && a.y_mm + a.width_mm > b.y_mm + EPS &&
-    a.z_mm < b.z_mm + b.height_mm - EPS && a.z_mm + a.height_mm > b.z_mm + EPS
+    a.x_mm < b.x_mm + b.length_mm - eps && a.x_mm + a.length_mm > b.x_mm + eps &&
+    a.y_mm < b.y_mm + b.width_mm - eps && a.y_mm + a.width_mm > b.y_mm + eps &&
+    a.z_mm < b.z_mm + b.height_mm - eps && a.z_mm + a.height_mm > b.z_mm + eps
   );
 }
 
@@ -29,6 +29,7 @@ export function validateBoxesLightweight(
   otherBoxes: BoxResult[],
   palletSpec: { length_mm: number; width_mm: number; max_height_mm: number },
   settings: ManualAdjustmentSettings,
+  options: { overlapToleranceMm?: number } = {},
 ): LayoutValidationResult {
   const errors: string[] = [];
   const invalidBoxIds: string[] = [];
@@ -59,7 +60,7 @@ export function validateBoxesLightweight(
     ));
 
     for (const other of nearby) {
-      if (boxesOverlap(box, other)) {
+      if (boxesOverlap(box, other, options.overlapToleranceMm ?? EPS)) {
         errors.push(`Box '${box.box_id}' overlaps '${other.box_id}'.`);
         invalid = true;
         if (!invalidBoxIds.includes(other.box_id)) invalidBoxIds.push(other.box_id);

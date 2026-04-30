@@ -10,6 +10,7 @@ interface Props {
   snapToBoxEdges: boolean;
   snapToThreshold: boolean;
   unlockedMode: boolean;
+  autoFitOnRelease: boolean;
   canUndo: boolean;
   canRedo: boolean;
   isSaving: boolean;
@@ -31,6 +32,7 @@ interface Props {
   onSnapToBoxEdgesChange: (v: boolean) => void;
   onSnapToThresholdChange: (v: boolean) => void;
   onUnlockedModeChange: (v: boolean) => void;
+  onAutoFitOnReleaseChange: (v: boolean) => void;
   onUndo: () => void;
   onRedo: () => void;
   onReset: () => void;
@@ -67,11 +69,11 @@ const SNAP_STRENGTH_OPTIONS = [
 ] as const;
 
 export default function ManualAdjustToolbar({
-  settings, selectionMode, snapToBoxEdges, snapToThreshold, unlockedMode,
+  settings, selectionMode, snapToBoxEdges, snapToThreshold, unlockedMode, autoFitOnRelease,
   canUndo, canRedo, isSaving, isOrbitActive,
   canCompactRow, canCompactLayer,
   magneticSnapEnabled, magneticSnapStrength,
-  onSettingsChange, onSelectionModeChange, onSnapToBoxEdgesChange, onSnapToThresholdChange, onUnlockedModeChange,
+  onSettingsChange, onSelectionModeChange, onSnapToBoxEdgesChange, onSnapToThresholdChange, onUnlockedModeChange, onAutoFitOnReleaseChange,
   onCompactRow, onCompactLayer, onCompactPallet,
   onToggleMagneticSnap, onSetMagneticSnapStrength,
   onUndo, onRedo, onReset, onSave, onExit,
@@ -106,6 +108,13 @@ export default function ManualAdjustToolbar({
       </Btn>
       <Btn active={unlockedMode} onClick={() => onUnlockedModeChange(true)}>
         Unlocked
+      </Btn>
+      <Btn
+        active={autoFitOnRelease}
+        onClick={() => onAutoFitOnReleaseChange(!autoFitOnRelease)}
+        title="On release, slot the selection into a nearby valid gap when possible"
+      >
+        Auto Fit {autoFitOnRelease ? "ON" : "OFF"}
       </Btn>
 
       <div className="w-px h-5 bg-indigo-700" />

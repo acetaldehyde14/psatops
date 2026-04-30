@@ -173,6 +173,7 @@ class ManualAdjustmentSettings(BaseModel):
     edge_threshold_width_mm: float = 0.0
     snap_grid_mm: int = 50
     drag_sensitivity: float = 0.35
+    autoFitSearchRadiusMm: float = 150.0
 
 
 class BoxPatch(BaseModel):

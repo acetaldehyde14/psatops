@@ -48,6 +48,7 @@ const DEFAULT_SETTINGS: ManualAdjustmentSettings = {
   edge_threshold_width_mm: 0,
   snap_grid_mm: 50,
   drag_sensitivity: 0.35,
+  autoFitSearchRadiusMm: 150,
 };
 
 const PALLET_SPEC = { length_mm: 1200, width_mm: 1100, max_height_mm: 1150, max_weight_kg: 1500 };
@@ -62,6 +63,7 @@ export default function ResultsPage() {
   const [selectedPallet, setSelectedPallet] = useState(0);
   const [layerFilter, setLayerFilter] = useState<number | null>(null);
   const [tab, setTab] = useState<"3d" | "table">("3d");
+  const [viewMode, setViewMode] = useState<"normal" | "xray">("normal");
   const [isManuallyAdjusted, setIsManuallyAdjusted] = useState(false);
 
   // Edit mode
@@ -76,6 +78,7 @@ export default function ResultsPage() {
   const [snapToBoxEdges, setSnapToBoxEdges] = useState(false);
   const [snapToThreshold, setSnapToThreshold] = useState(true);
   const [unlockedMode, setUnlockedMode] = useState(false);
+  const [autoFitOnRelease, setAutoFitOnRelease] = useState(true);
   const [magneticSnapEnabled, setMagneticSnapEnabled] = useState(false);
   const [magneticSnapStrength, setMagneticSnapStrength] = useState(0.65);
   const [lockedRows, setLockedRows] = useState<LockedRow[]>([]);
@@ -441,6 +444,7 @@ export default function ResultsPage() {
           snapToBoxEdges={snapToBoxEdges}
           snapToThreshold={snapToThreshold}
           unlockedMode={unlockedMode}
+          autoFitOnRelease={autoFitOnRelease}
           canUndo={history.length > 0}
           canRedo={future.length > 0}
           isSaving={isSaving}
@@ -454,6 +458,7 @@ export default function ResultsPage() {
           onSnapToBoxEdgesChange={setSnapToBoxEdges}
           onSnapToThresholdChange={setSnapToThreshold}
           onUnlockedModeChange={setUnlockedMode}
+          onAutoFitOnReleaseChange={setAutoFitOnRelease}
           onCompactRow={handleCompactRow}
           onCompactLayer={handleCompactLayer}
           onCompactPallet={handleCompactPallet}
@@ -516,6 +521,24 @@ export default function ResultsPage() {
 
           {tab === "3d" && pallet && (
             <div className="flex-1 flex flex-col overflow-hidden">
+              {/* Render mode tabs */}
+              <div className="flex items-center gap-1 px-4 py-1.5 bg-white border-b border-gray-100 flex-shrink-0">
+                {(["normal", "xray"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setViewMode(mode)}
+                    className={clsx(
+                      "px-3 py-1 rounded-md text-xs font-medium border transition-colors",
+                      viewMode === mode
+                        ? "bg-blue-600 text-white border-blue-600"
+                        : "bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600",
+                    )}
+                  >
+                    {mode === "normal" ? "Normal View" : "X-Ray View"}
+                  </button>
+                ))}
+              </div>
               {/* Layer filter */}
               <div className="flex items-center gap-3 px-4 py-1.5 bg-gray-50 border-b border-gray-100 flex-wrap flex-shrink-0">
                 <span className="text-xs text-gray-500">Layer:</span>
@@ -535,6 +558,7 @@ export default function ResultsPage() {
                   <PalletViewer3D
                     pallet={pallet}
                     palletSpec={PALLET_SPEC}
+                    viewMode={viewMode}
                     layerFilter={layerFilter}
                     editMode={editMode}
                     settings={settings}
@@ -545,11 +569,13 @@ export default function ResultsPage() {
                     snapToBoxEdges={snapToBoxEdges}
                     snapToThreshold={snapToThreshold}
                     unlockedMode={unlockedMode}
+                    autoFitOnRelease={autoFitOnRelease}
                     magneticSnapEnabled={magneticSnapEnabled && !unlockedMode}
                     magneticSnapStrength={magneticSnapStrength}
                     lockedRows={lockedRows}
                     onBoxClick={editMode ? handleBoxClick : undefined}
                     onBoxDragEnd={editMode ? handleBoxDragEnd : undefined}
+                    onManualAdjustMessage={setSaveMsg}
                   />
                 </div>
                 <SkuLegend

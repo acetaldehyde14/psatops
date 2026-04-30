@@ -9,11 +9,15 @@ import LayerGuideGrid, { SCALE } from "./LayerGuideGrid";
 import { applySnappingDetailed, applyMagneticSnap, snapToHorizontalGap, type SnapGuide } from "@/lib/snapping";
 import { isBoxInLockedRow, getMovableSelection, type LockedRow } from "@/lib/rowLocking";
 import { validateBoxesLightweight, validateLayout } from "@/lib/layoutValidation";
+import { autoFitOnRelease as runAutoFitOnRelease } from "@/lib/autoFit";
 import * as THREE from "three";
+
+export type ViewMode = "normal" | "xray";
 
 interface Props {
   pallet: PalletResult;
   palletSpec: { length_mm: number; width_mm: number; max_height_mm: number; max_weight_kg?: number };
+  viewMode?: ViewMode;
   layerFilter?: number | null;
   editMode?: boolean;
   settings?: ManualAdjustmentSettings;
@@ -24,11 +28,13 @@ interface Props {
   snapToBoxEdges?: boolean;
   snapToThreshold?: boolean;
   unlockedMode?: boolean;
+  autoFitOnRelease?: boolean;
   magneticSnapEnabled?: boolean;
   magneticSnapStrength?: number;
   lockedRows?: LockedRow[];
   onBoxClick?: (box: BoxResult, multi: boolean) => void;
   onBoxDragEnd?: (moves: Array<{ box_id: string; x: number; y: number }>) => void;
+  onManualAdjustMessage?: (message: string) => void;
 }
 
 type PreviewStatus = "valid" | "invalid" | "snapped";
@@ -66,6 +72,19 @@ function boxesOverlapMm(a: BoxResult, b: BoxResult, eps = 0.5): boolean {
     a.y_mm < b.y_mm + b.width_mm - eps && a.y_mm + a.width_mm > b.y_mm + eps &&
     a.z_mm < b.z_mm + b.height_mm - eps && a.z_mm + a.height_mm > b.z_mm + eps
   );
+}
+
+function boundsForBoxes(boxes: BoxResult[]): { x: number; y: number; l: number; w: number } | null {
+  if (boxes.length === 0) return null;
+  const x = Math.min(...boxes.map((box) => box.x_mm));
+  const y = Math.min(...boxes.map((box) => box.y_mm));
+  const maxX = Math.max(...boxes.map((box) => box.x_mm + box.length_mm));
+  const maxY = Math.max(...boxes.map((box) => box.y_mm + box.width_mm));
+  return { x, y, l: maxX - x, w: maxY - y };
+}
+
+function boundsDistance(a: { x: number; y: number; l: number; w: number }, b: { x: number; y: number; l: number; w: number }): number {
+  return Math.hypot((a.x + a.l / 2) - (b.x + b.l / 2), (a.y + a.w / 2) - (b.y + b.w / 2));
 }
 
 // ── Pallet base + ghost outline ───────────────────────────────────────────────
@@ -108,6 +127,27 @@ function DragPlane({
   );
 }
 
+function AutoFitGhostBoxes({ boxes }: { boxes: BoxResult[] }) {
+  if (boxes.length === 0) return null;
+  return (
+    <group>
+      {boxes.map((box) => (
+        <mesh
+          key={`autofit-${box.box_id}`}
+          position={[
+            (box.x_mm + box.length_mm / 2) * SCALE,
+            (box.y_mm + box.width_mm / 2) * SCALE,
+            (box.z_mm + box.height_mm / 2) * SCALE,
+          ]}
+        >
+          <boxGeometry args={[box.length_mm * SCALE, box.width_mm * SCALE, box.height_mm * SCALE]} />
+          <meshStandardMaterial color="#22c55e" transparent opacity={0.28} depthWrite={false} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 // ── Single box mesh ───────────────────────────────────────────────────────────
 interface BoxMeshProps {
   box: BoxResult;
@@ -115,6 +155,7 @@ interface BoxMeshProps {
   hovered: boolean;
   invalid: boolean;
   legendHighlighted: boolean;
+  viewMode: ViewMode;
   editMode: boolean;
   orbitActive: boolean;
   colorBySku?: Record<string, string>;
@@ -128,7 +169,7 @@ interface BoxMeshProps {
 }
 
 const BoxMesh = memo(function BoxMesh({
-  box, selected, hovered, invalid, legendHighlighted, editMode, orbitActive, colorBySku,
+  box, selected, hovered, invalid, legendHighlighted, viewMode, editMode, orbitActive, colorBySku,
   isLockedRow, registerController,
   onHoverChange,
   onPointerDown, onDragMove, onDragUp, onClick,
@@ -138,9 +179,10 @@ const BoxMesh = memo(function BoxMesh({
   const outlineRef = useRef<THREE.LineSegments>(null);
   const materialRef = useRef<THREE.MeshStandardMaterial>(null);
   const skuColor = useMemo(() => colorBySku?.[box.sku] ?? getSkuColor(box.sku), [box.sku, colorBySku]);
+  const isXray = viewMode === "xray";
   const baseColor = invalid ? "#ef4444" : skuColor;
-  const showOutline = invalid || selected || hovered || legendHighlighted || isLockedRow;
-  const outlineColor = invalid ? "#ef4444" : selected ? "#2563eb" : isLockedRow ? "#9333ea" : "#f59e0b";
+  const showOutline = invalid || selected || hovered || legendHighlighted || isLockedRow || isXray;
+  const outlineColor = invalid ? "#ef4444" : selected ? "#2563eb" : isLockedRow ? "#9333ea" : isXray ? "#222222" : "#f59e0b";
 
   const px = (box.x_mm + box.length_mm / 2) * SCALE;
   const py = (box.y_mm + box.width_mm / 2) * SCALE;
@@ -164,14 +206,15 @@ const BoxMesh = memo(function BoxMesh({
     const isPreviewInvalid = previewStatus === "invalid";
     const color = previewStatus === "snapped" ? "#2563eb" : previewStatus === "valid" ? "#22c55e" : isPreviewInvalid ? "#ef4444" : baseColor;
     material.color.set(color);
-    material.opacity = previewStatus === undefined ? (hovered || selected ? 1.0 : 0.82) : 0.54;
-    material.transparent = material.opacity < 1;
+    material.opacity = previewStatus === undefined ? (isXray ? 0.45 : hovered || selected ? 1.0 : 0.82) : 0.54;
+    material.transparent = isXray || material.opacity < 1;
+    material.depthWrite = !isXray;
     material.emissive.set(
       isPreviewInvalid || invalid ? "#ef4444" : selected ? color : legendHighlighted || hovered ? "#f59e0b" : "#000000",
     );
     material.emissiveIntensity = isPreviewInvalid ? 0.3 : selected ? 0.35 : legendHighlighted || hovered ? 0.16 : 0;
     material.needsUpdate = true;
-  }, [baseColor, hovered, invalid, legendHighlighted, selected]);
+  }, [baseColor, hovered, invalid, isXray, legendHighlighted, selected]);
 
   const setRenderedPosition = useCallback((xMm: number, yMm: number) => {
     const x = (xMm + box.length_mm / 2) * SCALE;
@@ -247,15 +290,21 @@ const BoxMesh = memo(function BoxMesh({
         <meshStandardMaterial
           ref={materialRef}
           color={baseColor}
-          opacity={hovered || selected || legendHighlighted ? 1.0 : 0.82}
+          opacity={isXray ? 0.45 : hovered || selected || legendHighlighted ? 1.0 : 0.82}
           transparent
+          depthWrite={!isXray}
           emissive={invalid ? "#ef4444" : selected ? baseColor : hovered || legendHighlighted ? "#f59e0b" : "#000000"}
           emissiveIntensity={invalid ? 0.3 : selected ? 0.35 : hovered || legendHighlighted ? 0.16 : 0}
         />
       </mesh>
       {showOutline && (
         <lineSegments ref={outlineRef} position={[px, py, pz]} geometry={outlineGeometry}>
-          <lineBasicMaterial color={outlineColor} linewidth={3} transparent opacity={hovered && !selected && !invalid ? 0.78 : 1} />
+          <lineBasicMaterial
+            color={outlineColor}
+            linewidth={3}
+            transparent
+            opacity={isXray && !selected && !hovered && !invalid ? 0.55 : hovered && !selected && !invalid ? 0.78 : 1}
+          />
         </lineSegments>
       )}
     </>
@@ -285,9 +334,15 @@ function SpacebarOrbit({
 
 // ── Main viewer ───────────────────────────────────────────────────────────────
 export default function PalletViewer3D({
-  pallet, palletSpec, layerFilter,
+  pallet, palletSpec, viewMode = "normal", layerFilter,
   editMode = false,
-  settings = { edge_threshold_length_mm: 0, edge_threshold_width_mm: 0, snap_grid_mm: 50, drag_sensitivity: 0.35 },
+  settings = {
+    edge_threshold_length_mm: 0,
+    edge_threshold_width_mm: 0,
+    snap_grid_mm: 50,
+    drag_sensitivity: 0.35,
+    autoFitSearchRadiusMm: 150,
+  },
   invalidBoxIds = new Set(),
   selectedBoxIds = new Set(),
   highlightedSku,
@@ -295,16 +350,19 @@ export default function PalletViewer3D({
   snapToBoxEdges = false,
   snapToThreshold = false,
   unlockedMode = false,
+  autoFitOnRelease = true,
   magneticSnapEnabled = false,
   magneticSnapStrength = 0.65,
   lockedRows = [],
   onBoxClick,
   onBoxDragEnd,
+  onManualAdjustMessage,
 }: Props) {
   const [viewSelected, setViewSelected] = useState<BoxResult | null>(null);
   const [orbitActive, setOrbitActive] = useState(false);
   const [altUnlocked, setAltUnlocked] = useState(false);
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
+  const [autoFitGhostBoxes, setAutoFitGhostBoxes] = useState<BoxResult[]>([]);
   const [hoveredBoxId, setHoveredBoxId] = useState<string | null>(null);
   const controlsRef = useRef<any>(null);
   const boxControllers = useRef(new Map<string, BoxPreviewController>());
@@ -530,7 +588,27 @@ export default function PalletViewer3D({
       guides: [...snapped.guides, ...gapSnapped.guides],
       status: !validation.isValid ? "invalid" as const : snapped.guides.length > 0 || gapSnapped.guides.length > 0 ? "snapped" as const : "valid" as const,
     };
-  }, [boxById, effectiveUnlocked, pallet.boxes, palletSpec, settings, snapToBoxEdges, snapToThreshold]);
+  }, [boxById, effectiveUnlocked, magneticSnapEnabled, magneticSnapStrength, pallet.boxes, palletSpec, settings, snapToBoxEdges, snapToThreshold]);
+
+  const applyCandidateToPallet = useCallback((candidateBoxes: BoxResult[]) => {
+    return pallet.boxes.map((box) => {
+      const moved = candidateBoxes.find((candidateBox) => candidateBox.box_id === box.box_id);
+      return moved ?? box;
+    });
+  }, [pallet.boxes]);
+
+  const applyPositionMapToPallet = useCallback((positions: Map<string, { x: number; y: number }>) => (
+    pallet.boxes.map((box) => {
+      const pos = positions.get(box.box_id);
+      return pos ? { ...box, x_mm: pos.x, y_mm: pos.y } : box;
+    })
+  ), [pallet.boxes]);
+
+  const getMovedBoxesFromLayout = useCallback((layout: BoxResult[], ids: string[]) => (
+    ids
+      .map((id) => layout.find((box) => box.box_id === id))
+      .filter((box): box is BoxResult => Boolean(box))
+  ), []);
 
   const flushDragPreview = useCallback(() => {
     dragFrame.current = null;
@@ -555,6 +633,19 @@ export default function PalletViewer3D({
       });
     }
     setSnapGuides(candidate.guides);
+    if (autoFitOnRelease && !effectiveUnlocked) {
+      const candidateLayout = applyCandidateToPallet(candidate.boxes);
+      const fit = runAutoFitOnRelease({
+        layout: candidateLayout,
+        movingBoxIds: session.ids,
+        pallet: palletSpec,
+        settings,
+        lastValidLayout: applyPositionMapToPallet(session.lastValid),
+      });
+      setAutoFitGhostBoxes(fit.fitted ? getMovedBoxesFromLayout(fit.layout, session.ids) : []);
+    } else {
+      setAutoFitGhostBoxes([]);
+    }
 
     if (candidate.validation.isValid) {
       session.lastValid = new Map(candidate.boxes.map((box) => [
@@ -562,7 +653,7 @@ export default function PalletViewer3D({
         { x: box.x_mm, y: box.y_mm },
       ]));
     }
-  }, [buildCandidate]);
+  }, [applyCandidateToPallet, applyPositionMapToPallet, autoFitOnRelease, buildCandidate, effectiveUnlocked, getMovedBoxesFromLayout, palletSpec, settings]);
 
   const scheduleDragPreview = useCallback((pointMm: { x: number; y: number }) => {
     const session = dragSession.current;
@@ -608,7 +699,7 @@ export default function PalletViewer3D({
     setDragPlaneZ(box.z_mm * SCALE);
     setSnapGuides([]);
     scheduleDragPreview(hit);
-  }, [editMode, orbitActive, onBoxClick, pallet.boxes, scheduleDragPreview, selectedBoxIds]);
+  }, [editMode, lockedRows, orbitActive, onBoxClick, pallet.boxes, scheduleDragPreview, selectedBoxIds]);
 
   const handleDragMove = useCallback((e: ThreeEvent<PointerEvent>) => {
     const session = dragSession.current;
@@ -630,13 +721,10 @@ export default function PalletViewer3D({
     let commitPositions = session.lastValid;
     if (session.latestPointMm) {
       const candidate = buildCandidate(session, session.latestPointMm);
-      if (candidate && candidate.validation.isValid) {
+      if (candidate) {
         const candidatePallet: PalletResult = {
           ...pallet,
-          boxes: pallet.boxes.map((box) => {
-            const moved = candidate.boxes.find((candidateBox) => candidateBox.box_id === box.box_id);
-            return moved ?? box;
-          }),
+          boxes: applyCandidateToPallet(candidate.boxes),
         };
         const fullValidation = validateLayout(
           [candidatePallet],
@@ -648,11 +736,47 @@ export default function PalletViewer3D({
           },
           settings,
         );
+        const shouldAutoFit = e.shiftKey || (autoFitOnRelease && !effectiveUnlocked);
         if (fullValidation.isValid) {
           commitPositions = new Map(candidate.boxes.map((box) => [
             box.box_id,
             { x: box.x_mm, y: box.y_mm },
           ]));
+          if (shouldAutoFit) {
+            const fit = runAutoFitOnRelease({
+              layout: candidatePallet.boxes,
+              movingBoxIds: session.ids,
+              pallet: palletSpec,
+              settings: { ...settings, autoFitSearchRadiusMm: 40 },
+              lastValidLayout: applyPositionMapToPallet(session.lastValid),
+            });
+            const releaseBounds = boundsForBoxes(getMovedBoxesFromLayout(candidatePallet.boxes, session.ids));
+            const fitBounds = fit.fitted ? boundsForBoxes(getMovedBoxesFromLayout(fit.layout, session.ids)) : null;
+            if (fit.fitted && releaseBounds && fitBounds && boundsDistance(releaseBounds, fitBounds) <= 40) {
+              commitPositions = new Map(getMovedBoxesFromLayout(fit.layout, session.ids).map((box) => [
+                box.box_id,
+                { x: box.x_mm, y: box.y_mm },
+              ]));
+              onManualAdjustMessage?.(fit.message ?? "Auto-fitted into nearby gap");
+            }
+          }
+        } else if (shouldAutoFit) {
+          const fit = runAutoFitOnRelease({
+            layout: candidatePallet.boxes,
+            movingBoxIds: session.ids,
+            pallet: palletSpec,
+            settings,
+            lastValidLayout: applyPositionMapToPallet(session.lastValid),
+          });
+          if (fit.fitted) {
+            commitPositions = new Map(getMovedBoxesFromLayout(fit.layout, session.ids).map((box) => [
+              box.box_id,
+              { x: box.x_mm, y: box.y_mm },
+            ]));
+            onManualAdjustMessage?.(fit.message ?? "Auto-fitted into nearby gap");
+          } else {
+            onManualAdjustMessage?.(fit.message ?? "No valid gap found");
+          }
         }
       }
     }
@@ -672,11 +796,24 @@ export default function PalletViewer3D({
     setDragPlaneZ(null);
     for (const id of Array.from(session.previewIds)) boxControllers.current.get(id)?.clearPreview();
     setSnapGuides([]);
+    setAutoFitGhostBoxes([]);
 
     if (moves.length > 0) {
       onBoxDragEnd?.(moves);
     }
-  }, [buildCandidate, onBoxDragEnd, pallet, palletSpec, settings]);
+  }, [
+    applyCandidateToPallet,
+    applyPositionMapToPallet,
+    autoFitOnRelease,
+    buildCandidate,
+    effectiveUnlocked,
+    getMovedBoxesFromLayout,
+    onBoxDragEnd,
+    onManualAdjustMessage,
+    pallet,
+    palletSpec,
+    settings,
+  ]);
 
   useEffect(() => () => {
     if (dragFrame.current !== null) window.cancelAnimationFrame(dragFrame.current);
@@ -762,6 +899,7 @@ export default function PalletViewer3D({
             hovered={hoveredBoxId === box.box_id}
             invalid={invalidBoxIds.has(box.box_id)}
             legendHighlighted={highlightedSku === box.sku}
+            viewMode={viewMode}
             isLockedRow={isBoxInLockedRow(box.box_id, lockedRows)}
             editMode={editMode}
             orbitActive={orbitActive}
@@ -772,8 +910,10 @@ export default function PalletViewer3D({
             onDragMove={handleDragMove}
             onDragUp={handleDragUp}
             onClick={handleBoxClick}
-          />
+            />
         ))}
+
+        <AutoFitGhostBoxes boxes={autoFitGhostBoxes} />
 
         <SpacebarOrbit
           orbitActive={!editMode || orbitActive}

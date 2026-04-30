@@ -130,6 +130,7 @@ export interface ManualAdjustmentSettings {
   edge_threshold_width_mm: number;
   snap_grid_mm: number;
   drag_sensitivity: number;
+  autoFitSearchRadiusMm: number;
 }
 
 export interface BoxPatch {

@@ -12,7 +12,7 @@ import { validateBoxesLightweight, validateLayout } from "@/lib/layoutValidation
 import { autoFitOnRelease as runAutoFitOnRelease } from "@/lib/autoFit";
 import * as THREE from "three";
 
-export type ViewMode = "normal" | "xray";
+export type ViewMode = "normal" | "xray" | "solid";
 
 interface Props {
   pallet: PalletResult;
@@ -180,9 +180,11 @@ const BoxMesh = memo(function BoxMesh({
   const materialRef = useRef<THREE.MeshStandardMaterial>(null);
   const skuColor = useMemo(() => colorBySku?.[box.sku] ?? getSkuColor(box.sku), [box.sku, colorBySku]);
   const isXray = viewMode === "xray";
+  const isSolid = viewMode === "solid";
   const baseColor = invalid ? "#ef4444" : skuColor;
-  const showOutline = invalid || selected || hovered || legendHighlighted || isLockedRow || isXray;
-  const outlineColor = invalid ? "#ef4444" : selected ? "#2563eb" : isLockedRow ? "#9333ea" : isXray ? "#222222" : "#f59e0b";
+  // In xray mode we do NOT auto-outline every box — too much visual clutter.
+  const showOutline = invalid || selected || hovered || legendHighlighted || isLockedRow;
+  const outlineColor = invalid ? "#ef4444" : selected ? "#2563eb" : isLockedRow ? "#9333ea" : "#f59e0b";
 
   const px = (box.x_mm + box.length_mm / 2) * SCALE;
   const py = (box.y_mm + box.width_mm / 2) * SCALE;
@@ -206,15 +208,30 @@ const BoxMesh = memo(function BoxMesh({
     const isPreviewInvalid = previewStatus === "invalid";
     const color = previewStatus === "snapped" ? "#2563eb" : previewStatus === "valid" ? "#22c55e" : isPreviewInvalid ? "#ef4444" : baseColor;
     material.color.set(color);
-    material.opacity = previewStatus === undefined ? (isXray ? 0.45 : hovered || selected ? 1.0 : 0.82) : 0.54;
-    material.transparent = isXray || material.opacity < 1;
-    material.depthWrite = !isXray;
+
+    if (isSolid) {
+      // Solid: fully opaque, no transparency, no artifacts
+      material.opacity = 1.0;
+      material.transparent = false;
+      material.depthWrite = true;
+    } else if (isXray) {
+      // X-Ray: semi-transparent, no depth write to avoid sorting cutouts
+      material.opacity = previewStatus === undefined ? 0.35 : 0.54;
+      material.transparent = true;
+      material.depthWrite = false;
+    } else {
+      // Normal: slight transparency for depth feel
+      material.opacity = previewStatus === undefined ? (hovered || selected ? 1.0 : 0.82) : 0.54;
+      material.transparent = material.opacity < 1;
+      material.depthWrite = true;
+    }
+
     material.emissive.set(
       isPreviewInvalid || invalid ? "#ef4444" : selected ? color : legendHighlighted || hovered ? "#f59e0b" : "#000000",
     );
     material.emissiveIntensity = isPreviewInvalid ? 0.3 : selected ? 0.35 : legendHighlighted || hovered ? 0.16 : 0;
     material.needsUpdate = true;
-  }, [baseColor, hovered, invalid, isXray, legendHighlighted, selected]);
+  }, [baseColor, hovered, invalid, isSolid, isXray, legendHighlighted, selected]);
 
   const setRenderedPosition = useCallback((xMm: number, yMm: number) => {
     const x = (xMm + box.length_mm / 2) * SCALE;
@@ -290,9 +307,12 @@ const BoxMesh = memo(function BoxMesh({
         <meshStandardMaterial
           ref={materialRef}
           color={baseColor}
-          opacity={isXray ? 0.45 : hovered || selected || legendHighlighted ? 1.0 : 0.82}
-          transparent
+          opacity={isSolid ? 1.0 : isXray ? 0.35 : (hovered || selected || legendHighlighted ? 1.0 : 0.82)}
+          transparent={!isSolid}
           depthWrite={!isXray}
+          polygonOffset={isXray}
+          polygonOffsetFactor={isXray ? 1 : 0}
+          polygonOffsetUnits={isXray ? 1 : 0}
           emissive={invalid ? "#ef4444" : selected ? baseColor : hovered || legendHighlighted ? "#f59e0b" : "#000000"}
           emissiveIntensity={invalid ? 0.3 : selected ? 0.35 : hovered || legendHighlighted ? 0.16 : 0}
         />
@@ -303,7 +323,7 @@ const BoxMesh = memo(function BoxMesh({
             color={outlineColor}
             linewidth={3}
             transparent
-            opacity={isXray && !selected && !hovered && !invalid ? 0.55 : hovered && !selected && !invalid ? 0.78 : 1}
+            opacity={hovered && !selected && !invalid ? 0.78 : 1}
           />
         </lineSegments>
       )}
@@ -893,7 +913,7 @@ export default function PalletViewer3D({
         {/* Box meshes */}
         {visibleBoxes.map((box) => (
           <BoxMesh
-            key={box.box_id}
+            key={`${box.box_id}-${viewMode}`}
             box={box}
             selected={editMode ? selectedBoxIds.has(box.box_id) : viewSelected?.box_id === box.box_id}
             hovered={hoveredBoxId === box.box_id}

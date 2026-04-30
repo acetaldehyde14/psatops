@@ -63,7 +63,7 @@ export default function ResultsPage() {
   const [selectedPallet, setSelectedPallet] = useState(0);
   const [layerFilter, setLayerFilter] = useState<number | null>(null);
   const [tab, setTab] = useState<"3d" | "table">("3d");
-  const [viewMode, setViewMode] = useState<"normal" | "xray">("normal");
+  const [viewMode, setViewMode] = useState<"normal" | "xray" | "solid">("normal");
   const [isManuallyAdjusted, setIsManuallyAdjusted] = useState(false);
 
   // Edit mode
@@ -523,7 +523,7 @@ export default function ResultsPage() {
             <div className="flex-1 flex flex-col overflow-hidden">
               {/* Render mode tabs */}
               <div className="flex items-center gap-1 px-4 py-1.5 bg-white border-b border-gray-100 flex-shrink-0">
-                {(["normal", "xray"] as const).map((mode) => (
+                {(["normal", "xray", "solid"] as const).map((mode) => (
                   <button
                     key={mode}
                     type="button"
@@ -535,7 +535,7 @@ export default function ResultsPage() {
                         : "bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600",
                     )}
                   >
-                    {mode === "normal" ? "Normal View" : "X-Ray View"}
+                    {mode === "normal" ? "Normal View" : mode === "xray" ? "X-Ray View" : "Solid View"}
                   </button>
                 ))}
               </div>

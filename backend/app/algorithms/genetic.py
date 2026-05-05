@@ -24,9 +24,18 @@ def _chromosome(boxes: List[Box]) -> List[int]:
     return indices
 
 
-def _decode(chromosome: List[int], boxes: List[Box], pallet_spec, allow_rotation: bool) -> List[Pallet]:
+def _decode(chromosome: List[int], boxes: List[Box], pallet_spec, constraints) -> List[Pallet]:
     ordered = [copy.deepcopy(boxes[i]) for i in chromosome]
-    return run_extreme_point(ordered, pallet_spec, allow_rotation)
+    return run_extreme_point(
+        ordered,
+        pallet_spec,
+        allow_rotation=constraints,
+        prefer_larger_base=(
+            getattr(constraints, "prefer_larger_base", False)
+            if not isinstance(constraints, bool)
+            else False
+        ),
+    )
 
 
 def _crossover(p1: List[int], p2: List[int]) -> List[int]:
@@ -56,8 +65,19 @@ def _mutate(chromosome: List[int]) -> List[int]:
 def run_genetic(
     boxes: List[Box],
     pallet_spec,
-    allow_rotation: bool = True,
+    allow_rotation=True,
+    prefer_larger_base=False,
 ) -> List[Pallet]:
+    constraints = allow_rotation
+    if isinstance(constraints, bool):
+        class _Constraints:
+            pass
+
+        c = _Constraints()
+        c.allow_rotation = constraints
+        c.prefer_larger_base = prefer_larger_base
+        c.do_not_allow_stability_issues = True
+        constraints = c
     if not boxes:
         return []
 
@@ -68,8 +88,8 @@ def run_genetic(
     for gen in range(GENERATIONS):
         scored = []
         for chrom in population:
-            pallets = _decode(chrom, boxes, pallet_spec, allow_rotation)
-            s = score_solution(pallets)
+            pallets = _decode(chrom, boxes, pallet_spec, constraints)
+            s = score_solution(pallets, constraints)
             scored.append((s, chrom, pallets))
         scored.sort(key=lambda x: x[0])
 
@@ -88,6 +108,6 @@ def run_genetic(
         population = next_gen
 
     if best_solution is None:
-        best_solution = _decode(population[0], boxes, pallet_spec, allow_rotation)
+        best_solution = _decode(population[0], boxes, pallet_spec, constraints)
 
     return best_solution

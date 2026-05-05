@@ -1,6 +1,8 @@
 """Stability validation for placed boxes."""
 from typing import List, Tuple
 from app.core.models import Box, Pallet
+from app.core.schemas import StabilityIssue
+from app.algorithms.placement import SUPPORT_THRESHOLD
 
 
 def _overlaps_xy(b1: Box, b2: Box) -> bool:
@@ -34,15 +36,16 @@ def support_area_fraction(box: Box, boxes_below: List[Box]) -> float:
     return min(supported / total, 1.0)
 
 
-def validate_pallet(pallet: Pallet) -> Tuple[int, int, List[str]]:
+def validate_pallet(pallet: Pallet) -> Tuple[int, int, List[str], List[StabilityIssue]]:
     """
     Returns (floating_count, unstable_count, warnings).
     A box is floating if z > 0 and not supported.
-    A box is unstable if support_area < 50%.
+    A box is unstable if support_area < SUPPORT_THRESHOLD.
     """
     floating = 0
     unstable = 0
     warnings: List[str] = []
+    issues: List[StabilityIssue] = []
 
     for box in pallet.boxes:
         if box.z == 0:
@@ -57,15 +60,57 @@ def validate_pallet(pallet: Pallet) -> Tuple[int, int, List[str]]:
 
         if not supporting:
             floating += 1
-            warnings.append(
-                f"Box {box.box_id} (SKU {box.sku}) at z={box.z:.1f} has no support."
+            message = f"Box {box.box_id} (SKU {box.sku}) at z={box.z:.1f} has no support."
+            warnings.append(message)
+            issues.append(
+                StabilityIssue(
+                    type="floating",
+                    severity="error",
+                    box_id=box.box_id,
+                    pallet_no=pallet.pallet_no,
+                    sku=box.sku,
+                    message="Box is floating or has insufficient support",
+                )
             )
         else:
             frac = support_area_fraction(box, supporting)
-            if frac < 0.5:
+            if frac < SUPPORT_THRESHOLD:
                 unstable += 1
-                warnings.append(
-                    f"Box {box.box_id} (SKU {box.sku}) has only {frac*100:.0f}% support."
+                message = f"Box {box.box_id} (SKU {box.sku}) has only {frac*100:.0f}% support."
+                warnings.append(message)
+                issues.append(
+                    StabilityIssue(
+                        type="unstable",
+                        severity="warning",
+                        box_id=box.box_id,
+                        pallet_no=pallet.pallet_no,
+                        sku=box.sku,
+                        message=message,
+                    )
                 )
 
-    return floating, unstable, warnings
+    for base in pallet.boxes:
+        if not base.no_load_on_top:
+            continue
+        top_z = base.z + base.height
+        for other in pallet.boxes:
+            if other is base or abs(other.z - top_z) >= 1.0:
+                continue
+            if support_area_fraction(other, [base]) > 0:
+                message = (
+                    f"Box {other.box_id} (SKU {other.sku}) is on top of "
+                    f"{base.box_id}, which has no_load_on_top."
+                )
+                warnings.append(message)
+                issues.append(
+                    StabilityIssue(
+                        type="no_load_on_top",
+                        severity="warning",
+                        box_id=other.box_id,
+                        pallet_no=pallet.pallet_no,
+                        sku=other.sku,
+                        message=message,
+                    )
+                )
+
+    return floating, unstable, warnings, issues

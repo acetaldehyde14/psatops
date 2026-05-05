@@ -45,12 +45,12 @@ export default function UploadDropzone({ onUploaded }: Props) {
     >
       <Upload size={36} className="text-blue-400" />
       <div className="text-center">
-        <p className="font-semibold text-gray-700">Drop CSV or Excel file here</p>
-        <p className="text-sm text-gray-400">.csv, .xlsx, .xls supported</p>
+        <p className="font-semibold text-gray-700">Drop CSV, Excel, or JSON file here</p>
+        <p className="text-sm text-gray-400">.csv, .xlsx, .xls, .json supported</p>
       </div>
       <input
         type="file"
-        accept=".csv,.xlsx,.xls"
+        accept=".csv,.xlsx,.xls,.json,application/json"
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];

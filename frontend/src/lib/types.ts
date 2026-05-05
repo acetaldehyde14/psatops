@@ -5,6 +5,8 @@ export type AlgorithmType =
   | "GENETIC"
   | "AUTO";
 
+export type RotationAxis = "x" | "y" | "z";
+
 export interface PalletSpec {
   length_mm: number;
   width_mm: number;
@@ -14,6 +16,9 @@ export interface PalletSpec {
 
 export interface Constraints {
   allow_rotation: boolean;
+  fractional_quantity_mode?: "ceil" | "floor" | "exact_error" | "ignore_fractional_zero";
+  do_not_allow_stability_issues: boolean;
+  prefer_larger_base: boolean;
   stack_by: "weight" | "volume" | "height";
   mix_products: boolean;
   respect_fefo: boolean;
@@ -24,7 +29,11 @@ export interface Constraints {
 
 export interface ItemRequest {
   sku: string;
+  nia_item_code?: string;
+  description_of_goods?: string;
   quantity: number;
+  total_qty_pcs?: number;
+  qty_per_ctn?: number;
   length_mm: number;
   width_mm: number;
   height_mm: number;
@@ -32,8 +41,16 @@ export interface ItemRequest {
   lot_no?: string;
   expiry_date?: string;
   location?: string;
+  line_id?: string;
+  source_row?: number;
+  store?: string;
+  dc?: string;
   store_no?: string;
   dc_no?: string;
+  center_label?: string;
+  center_expected_cartons?: number;
+  partial_carton?: boolean;
+  original_quantity?: number;
   requested_delivery_date?: string;
   stand_upright_only?: boolean;
   no_load_on_top?: boolean;
@@ -50,7 +67,18 @@ export interface PalletiseRequest {
 export interface BoxResult {
   box_id: string;
   sku: string;
+  nia_item_code?: string;
+  description_of_goods?: string;
   lot_no?: string;
+  line_id?: string;
+  source_row?: number;
+  store_no?: string;
+  dc_no?: string;
+  center_label?: string;
+  center_expected_cartons?: number;
+  original_quantity?: number;
+  partial_carton?: boolean;
+  carton_index?: number;
   x_mm: number;
   y_mm: number;
   z_mm: number;
@@ -59,6 +87,8 @@ export interface BoxResult {
   height_mm: number;
   weight_kg: number;
   rotation: string;
+  base_area_mm2?: number;
+  is_larger_base_orientation?: boolean;
   layer: number;
   pick_sequence: number;
   location?: string;
@@ -74,6 +104,7 @@ export interface PalletResult {
   area_utilisation_pct: number;
   weight_kg: number;
   box_count: number;
+  sku_totals?: Record<string, number>;
   boxes: BoxResult[];
 }
 
@@ -85,7 +116,17 @@ export interface SummaryResult {
   total_weight_kg: number;
   floating_boxes: number;
   unstable_boxes: number;
-  warnings: string[];
+  stability_issues?: StabilityIssue[];
+  sku_totals?: Record<string, number>;
+  request_total_boxes?: number;
+  request_sku_totals?: Record<string, number>;
+  center_totals?: Record<string, {
+    input_lines: number;
+    expected_cartons?: number | null;
+    expanded_cartons: number;
+    quantity_sum_raw: number;
+  }>;
+  warnings: Array<string | WarningItem>;
 }
 
 export interface PalletiseResponse {
@@ -95,6 +136,19 @@ export interface PalletiseResponse {
   algorithm_used: string;
   summary: SummaryResult;
   pallets: PalletResult[];
+  constraints_used?: {
+    do_not_allow_stability_issues?: boolean;
+    prefer_larger_base?: boolean;
+  };
+  stability?: {
+    is_stable: boolean;
+    issues: StabilityIssue[];
+  };
+  unplaced_boxes?: Array<{
+    box_id: string;
+    sku: string;
+    reason: string;
+  }>;
   manually_adjusted?: boolean;
   layout_source?: string;
 }
@@ -107,7 +161,7 @@ export interface AlgorithmCompareEntry {
   total_weight_kg: number;
   floating_boxes: number;
   unstable_boxes: number;
-  warnings: string[];
+  warnings: Array<string | WarningItem>;
   job_id: string;
 }
 
@@ -131,6 +185,8 @@ export interface ManualAdjustmentSettings {
   snap_grid_mm: number;
   drag_sensitivity: number;
   autoFitSearchRadiusMm: number;
+  do_not_allow_stability_issues: boolean;
+  prefer_larger_base: boolean;
 }
 
 export interface BoxPatch {
@@ -160,6 +216,8 @@ export interface LayoutPatchRequest {
 
 export interface AdjustmentValidation {
   is_valid: boolean;
+  invalidBoxIds?: string[];
+  issues?: StabilityIssue[];
   errors: string[];
   warnings: string[];
 }
@@ -175,7 +233,27 @@ export interface LayoutPatchResponse {
 
 export interface LayoutValidationResult {
   isValid: boolean;
+  mode?: "strict" | "soft";
   invalidBoxIds: string[];
+  issues: StabilityIssue[];
   errors: string[];
   warnings: string[];
+}
+
+export interface StabilityIssue {
+  id?: string;
+  type: string;
+  severity: "error" | "warning" | "info";
+  box_id?: string;
+  pallet_no?: number;
+  sku?: string;
+  message: string;
+}
+
+export interface WarningItem {
+  id: string;
+  type?: string;
+  sku?: string;
+  message: string;
+  dismissible?: boolean;
 }

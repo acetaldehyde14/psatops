@@ -1,9 +1,12 @@
 """First Fit Decreasing (FFD) bin packing algorithm."""
+import os
 from typing import List
 from app.core.models import Box, Pallet
+from app.algorithms.placement import placement_stability_ok
+from app.algorithms.rotations import get_allowed_rotations
 
 
-def _can_place(pallet: Pallet, box: Box, x: float, y: float, z: float) -> bool:
+def _can_place(pallet: Pallet, box: Box, x: float, y: float, z: float, constraints=None) -> bool:
     l, w, h = box.length, box.width, box.height
     if x + l > pallet.length + 0.01:
         return False
@@ -21,13 +24,26 @@ def _can_place(pallet: Pallet, box: Box, x: float, y: float, z: float) -> bool:
                 and z < placed.z + placed.height - 0.01
                 and z + h > placed.z + 0.01):
             return False
+    if constraints is not None and not placement_stability_ok(pallet, box, x, y, z, constraints):
+        return False
     return True
 
 
-def _find_position(pallet: Pallet, box: Box, allow_rotation: bool):
+def _find_position(pallet: Pallet, box: Box, allow_rotation, prefer_larger_base=False):
     """Scan grid positions left-to-right, front-to-back, bottom-to-top."""
-    for rot in box.rotations(allow_rotation):
-        box.length, box.width, box.height, box.rotation = rot
+    constraints = allow_rotation
+    orig = (box.length, box.width, box.height, box.rotation)
+    rotations = get_allowed_rotations(box, allow_rotation, prefer_larger_base)
+    if os.getenv("DEBUG"):
+        print(
+            f"prefer_larger_base={prefer_larger_base}, "
+            f"box={box.sku}, rotations={rotations}"
+        )
+    for l, w, h, rotation in rotations:
+        box.length = l
+        box.width = w
+        box.height = h
+        box.rotation = rotation
         # Build candidate z heights per (x, y) column
         z_top = 0.0
         if pallet.boxes:
@@ -43,10 +59,13 @@ def _find_position(pallet: Pallet, box: Box, allow_rotation: bool):
             while y + box.width <= pallet.width + 0.01:
                 # Determine z: top of the highest box in this footprint
                 z = _find_z(pallet, box, x, y)
-                if _can_place(pallet, box, x, y, z):
-                    return x, y, z
+                if _can_place(pallet, box, x, y, z, constraints):
+                    found = (x, y, z, box.length, box.width, box.height, box.rotation)
+                    box.length, box.width, box.height, box.rotation = orig
+                    return found
                 y += step_y
             x += step_x
+    box.length, box.width, box.height, box.rotation = orig
     return None
 
 
@@ -64,7 +83,8 @@ def _find_z(pallet: Pallet, box: Box, x: float, y: float) -> float:
 def run_first_fit(
     boxes: List[Box],
     pallet_spec,
-    allow_rotation: bool = True,
+    allow_rotation=True,
+    prefer_larger_base=False,
 ) -> List[Pallet]:
     # Sort by volume descending (FFD)
     sorted_boxes = sorted(boxes, key=lambda b: b.volume, reverse=True)
@@ -90,9 +110,10 @@ def run_first_fit(
     for box in sorted_boxes:
         placed = False
         for pallet in pallets:
-            pos = _find_position(pallet, box, allow_rotation)
+            pos = _find_position(pallet, box, allow_rotation, prefer_larger_base)
             if pos is not None:
-                box.x, box.y, box.z = pos
+                box.x, box.y, box.z = pos[0], pos[1], pos[2]
+                box.length, box.width, box.height, box.rotation = pos[3], pos[4], pos[5], pos[6]
                 box.placed = True
                 box.layer = int(box.z // 250) + 1
                 pallet.boxes.append(box)
@@ -100,17 +121,15 @@ def run_first_fit(
                 break
         if not placed:
             current = new_pallet()
-            pos = _find_position(current, box, allow_rotation)
+            pos = _find_position(current, box, allow_rotation, prefer_larger_base)
             if pos is not None:
-                box.x, box.y, box.z = pos
+                box.x, box.y, box.z = pos[0], pos[1], pos[2]
+                box.length, box.width, box.height, box.rotation = pos[3], pos[4], pos[5], pos[6]
                 box.placed = True
                 box.layer = int(box.z // 250) + 1
                 current.boxes.append(box)
             else:
-                # Force place at 0,0,0 as fallback
-                box.x, box.y, box.z = 0.0, 0.0, 0.0
-                box.placed = True
-                current.boxes.append(box)
+                box.placed = False
 
     # Assign pick sequences
     for pallet in pallets:

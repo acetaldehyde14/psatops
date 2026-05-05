@@ -84,12 +84,14 @@ async def patch_layout(job_id: str, body: LayoutPatchRequest):
             boxes=new_boxes,
         ))
 
-    job_store.save_adjusted(job_id, adjusted_pallets, adjusted_at)
+    can_save = validation.is_valid or not body.settings.do_not_allow_stability_issues
+    if can_save:
+        job_store.save_adjusted(job_id, adjusted_pallets, adjusted_at)
 
     return LayoutPatchResponse(
         job_id=job_id,
-        status="saved",
-        manually_adjusted=True,
+        status="saved" if can_save else "rejected",
+        manually_adjusted=can_save,
         adjusted_at=adjusted_at,
         layout_source="manual_adjusted",
         validation=validation,

@@ -3,6 +3,7 @@ import clsx from "clsx";
 
 interface Props {
   summary: SummaryResult;
+  onStabilityClick?: () => void;
 }
 
 function Card({
@@ -10,56 +11,80 @@ function Card({
   value,
   sub,
   warn,
+  clickable,
+  onClick,
 }: {
   label: string;
   value: string | number;
   sub?: string;
   warn?: boolean;
+  clickable?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <div
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={clickable ? onClick : undefined}
+      onKeyDown={(event) => {
+        if (!clickable) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick?.();
+        }
+      }}
       className={clsx(
-        "bg-white rounded-xl border p-5 flex flex-col gap-1 shadow-sm",
-        warn ? "border-red-300" : "border-gray-200"
+        "min-h-[92px] min-w-0 overflow-hidden rounded-xl border bg-white px-4 py-3 shadow-sm transition-colors",
+        warn ? "border-red-300" : "border-slate-200",
+        clickable && "cursor-pointer hover:border-red-400 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-300"
       )}
     >
-      <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">
+      <div className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-500">
         {label}
-      </span>
-      <span
+      </div>
+      <div
         className={clsx(
-          "text-3xl font-bold",
-          warn ? "text-red-600" : "text-gray-900"
+          "mt-2 whitespace-nowrap text-2xl font-bold leading-none",
+          warn ? "text-red-600" : "text-slate-900"
         )}
       >
         {value}
-      </span>
-      {sub && <span className="text-xs text-gray-400">{sub}</span>}
+      </div>
+      {sub && <div className="mt-1 truncate text-xs leading-tight text-slate-400">{sub}</div>}
     </div>
   );
 }
 
-export default function ResultSummaryCards({ summary }: Props) {
+export default function ResultSummaryCards({ summary, onStabilityClick }: Props) {
   const hasWarnings =
     summary.floating_boxes > 0 || summary.unstable_boxes > 0;
+  const centerCount = Object.keys(summary.center_totals ?? {}).length;
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
-      <Card label="Pallets Used" value={summary.pallets_used} />
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <Card label="Pallets" value={summary.pallets_used} sub="used" />
       <Card
-        label="Vol. Utilisation"
+        label="Volume"
         value={`${summary.average_volume_utilisation_pct.toFixed(1)}%`}
         sub={`Area: ${summary.average_area_utilisation_pct.toFixed(1)}%`}
       />
-      <Card label="Total Boxes" value={summary.total_boxes} />
+      <Card label="Boxes" value={summary.total_boxes} sub="total" />
       <Card
-        label="Total Weight"
+        label="Centers"
+        value={centerCount}
+        sub={`${Object.values(summary.center_totals ?? {}).reduce((sum, center) => sum + center.expanded_cartons, 0)} cartons`}
+      />
+      <Card
+        label="Weight"
         value={`${summary.total_weight_kg.toFixed(1)} kg`}
+        sub="kg total"
       />
       <Card
         label="Stability"
         value={hasWarnings ? `${summary.floating_boxes + summary.unstable_boxes} issues` : "OK"}
         sub={hasWarnings ? `${summary.floating_boxes} floating, ${summary.unstable_boxes} unstable` : "No warnings"}
         warn={hasWarnings}
+        clickable={hasWarnings}
+        onClick={onStabilityClick}
       />
     </div>
   );

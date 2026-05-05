@@ -34,11 +34,25 @@ API docs: http://localhost:8000/docs
 
 ```bash
 cd frontend
+nvm use
 npm install
 npm run dev
 ```
 
 App: http://localhost:3000
+
+### Clean Frontend Install
+
+Use Node 20 LTS for local development and builds.
+
+```bash
+cd frontend
+nvm use
+rm -rf node_modules .next package-lock.json
+npm install
+npm run build
+npm run dev
+```
 
 ---
 
@@ -50,6 +64,28 @@ docker-compose up --build
 
 - Backend: http://localhost:8000
 - Frontend: http://localhost:3000
+
+---
+
+## Render Deployment
+
+Frontend Render environment variable:
+
+```text
+NODE_VERSION=20.11.1
+```
+
+Frontend build command:
+
+```bash
+npm install && npm run build
+```
+
+Frontend start command:
+
+```bash
+npm start
+```
 
 ---
 

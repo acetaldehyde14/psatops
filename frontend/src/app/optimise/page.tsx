@@ -5,16 +5,15 @@ import ConstraintForm from "@/components/ConstraintForm";
 import { palletise } from "@/lib/api";
 import type { PalletSpec, Constraints, AlgorithmType, ItemRequest } from "@/lib/types";
 import { defaultPalletiseRequest } from "@/lib/mockData";
-
-const DEFAULT_ITEMS_TEXT = JSON.stringify(defaultPalletiseRequest.items, null, 2);
+import { DEFAULT_CONSTRAINTS, DEFAULT_PALLET } from "@/lib/defaults";
 
 export default function OptimisePage() {
   const router = useRouter();
-  const [pallet, setPallet] = useState<PalletSpec>(defaultPalletiseRequest.pallet);
-  const [constraints, setConstraints] = useState<Constraints>(defaultPalletiseRequest.constraints);
+  const [pallet, setPallet] = useState<PalletSpec>(DEFAULT_PALLET);
+  const [constraints, setConstraints] = useState<Constraints>(DEFAULT_CONSTRAINTS);
   const [algorithm, setAlgorithm] = useState<AlgorithmType>("EXTREME_POINT");
-  const [orderId, setOrderId] = useState("ORD-001");
-  const [itemsText, setItemsText] = useState(DEFAULT_ITEMS_TEXT);
+  const [orderId, setOrderId] = useState("");
+  const [itemsText, setItemsText] = useState("");
   const [fromUpload, setFromUpload] = useState(false);
 
   useEffect(() => {
@@ -37,8 +36,28 @@ export default function OptimisePage() {
     setLoading(true);
     setError(null);
     try {
+      if (!itemsText.trim()) {
+        throw new Error("No order data loaded");
+      }
       const items: ItemRequest[] = JSON.parse(itemsText);
-      const result = await palletise({ order_id: orderId, algorithm, pallet, constraints, items });
+      if (!Array.isArray(items) || items.length === 0) {
+        throw new Error("No order data loaded");
+      }
+      const request = {
+        order_id: orderId,
+        algorithm,
+        pallet,
+        constraints: {
+          ...constraints,
+          prefer_larger_base: constraints.prefer_larger_base,
+          do_not_allow_stability_issues: constraints.do_not_allow_stability_issues,
+        },
+        items,
+      };
+      if (process.env.NODE_ENV === "development") {
+        console.log("Palletise request", request);
+      }
+      const result = await palletise(request);
       router.push(`/results/${result.job_id}`);
     } catch (e: any) {
       setError(e?.response?.data?.detail ?? e?.message ?? "Request failed");
@@ -47,10 +66,30 @@ export default function OptimisePage() {
     }
   };
 
+  const handleLoadDemoData = () => {
+    setPallet(defaultPalletiseRequest.pallet);
+    setConstraints(defaultPalletiseRequest.constraints);
+    setItemsText(JSON.stringify(defaultPalletiseRequest.items, null, 2));
+    setFromUpload(false);
+  };
+
   return (
     <div className="p-8 max-w-5xl mx-auto">
       <h1 className="text-2xl font-bold text-gray-900 mb-1">Optimise</h1>
       <p className="text-gray-500 text-sm mb-6">Configure your pallet and algorithm, then run the optimiser.</p>
+
+      {!itemsText.trim() && (
+        <div className="mb-5 flex items-center justify-between gap-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
+          <span>No order data loaded. Upload a file first or paste item JSON below.</span>
+          <button
+            type="button"
+            onClick={handleLoadDemoData}
+            className="shrink-0 bg-white hover:bg-yellow-100 border border-yellow-300 text-yellow-800 font-medium px-3 py-1.5 rounded text-xs"
+          >
+            Load Demo Data
+          </button>
+        </div>
+      )}
 
       {fromUpload && (
         <div className="mb-5 flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
@@ -91,6 +130,15 @@ export default function OptimisePage() {
           <p className="text-xs text-gray-400">
             Paste items JSON directly, or use the <strong>Upload</strong> page and click &ldquo;Go to Optimise&rdquo; to auto-fill.
           </p>
+          {itemsText.trim() && (
+            <button
+              type="button"
+              onClick={handleLoadDemoData}
+              className="self-start text-xs text-blue-600 hover:underline"
+            >
+              Load Demo Data
+            </button>
+          )}
         </div>
       </div>
 

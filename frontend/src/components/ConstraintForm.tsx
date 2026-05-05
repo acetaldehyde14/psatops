@@ -32,11 +32,24 @@ function NumInput({ value, onChange }: { value: number; onChange: (v: number) =>
   );
 }
 
-function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+function Toggle({
+  checked,
+  onChange,
+  label,
+  description,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+  description?: string;
+}) {
   return (
-    <label className="flex items-center gap-2 text-sm cursor-pointer">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="w-4 h-4 accent-blue-600" />
-      {label}
+    <label className="flex items-start gap-2 text-sm cursor-pointer">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="w-4 h-4 accent-blue-600 mt-0.5" />
+      <span>
+        <span className="font-medium text-gray-700">{label}</span>
+        {description && <span className="block text-xs text-gray-500 leading-snug">{description}</span>}
+      </span>
     </label>
   );
 }
@@ -75,6 +88,18 @@ export default function ConstraintForm({
         <h3 className="font-semibold text-sm text-gray-700 mb-3">Constraints</h3>
         <div className="space-y-2">
           <Toggle checked={constraints.allow_rotation} onChange={(v) => upC("allow_rotation", v)} label="Allow rotation" />
+          <Toggle
+            checked={constraints.do_not_allow_stability_issues}
+            onChange={(v) => upC("do_not_allow_stability_issues", v)}
+            label="Do not allow stability issues"
+            description="When enabled, optimiser rejects floating or poorly supported placements instead of only warning."
+          />
+          <Toggle
+            checked={constraints.prefer_larger_base}
+            onChange={(v) => upC("prefer_larger_base", v)}
+            label="Prefer lay flat / larger base"
+            description="When enabled, boxes are rotated to use their largest allowed base area where possible, improving stability."
+          />
           <Toggle checked={constraints.mix_products} onChange={(v) => upC("mix_products", v)} label="Mix products on pallet" />
           <Toggle checked={constraints.respect_fefo} onChange={(v) => upC("respect_fefo", v)} label="Respect FEFO (expiry date)" />
           <Toggle checked={constraints.respect_delivery_date} onChange={(v) => upC("respect_delivery_date", v)} label="Group by delivery date" />

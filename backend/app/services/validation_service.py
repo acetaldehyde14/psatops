@@ -3,27 +3,48 @@ from typing import List, Tuple
 from app.core.schemas import PalletiseRequest, LayoutPatchRequest, AdjustmentValidation
 
 
-def validate_request(req: PalletiseRequest) -> List[str]:
+def _fits_pallet(item, req: PalletiseRequest) -> bool:
+    orientations = [(item.length_mm, item.width_mm, item.height_mm)]
+    if req.constraints.allow_rotation:
+        if item.stand_upright_only:
+            orientations = [
+                (item.length_mm, item.width_mm, item.height_mm),
+                (item.width_mm, item.length_mm, item.height_mm),
+            ]
+        else:
+            l, w, h = item.length_mm, item.width_mm, item.height_mm
+            orientations = [
+                (l, w, h), (l, h, w), (w, l, h),
+                (w, h, l), (h, l, w), (h, w, l),
+            ]
+    return any(
+        l <= req.pallet.length_mm and w <= req.pallet.width_mm and h <= req.pallet.max_height_mm
+        for l, w, h in orientations
+    )
+
+
+def validate_request(req: PalletiseRequest) -> Tuple[List[str], List[str]]:
+    errors: List[str] = []
     warnings = []
+    if not req.items:
+        errors.append("No order items provided.")
     for item in req.items:
+        if not item.sku or not item.sku.strip():
+            errors.append("Item SKU is required.")
         if item.length_mm <= 0 or item.width_mm <= 0 or item.height_mm <= 0:
-            warnings.append(f"SKU {item.sku}: dimensions must be positive.")
-        if item.weight_kg <= 0:
-            warnings.append(f"SKU {item.sku}: weight must be positive.")
+            errors.append(f"SKU {item.sku}: dimensions must be positive.")
+            continue
+        if item.weight_kg == 0:
+            warnings.append(f"SKU {item.sku}: weight missing or zero; using 0 kg.")
+        elif item.weight_kg < 0:
+            errors.append(f"SKU {item.sku}: weight cannot be negative.")
         if item.quantity <= 0:
-            warnings.append(f"SKU {item.sku}: quantity must be positive.")
-        fits = (
-            item.length_mm <= req.pallet.length_mm
-            or item.width_mm <= req.pallet.length_mm
-        ) and (
-            item.length_mm <= req.pallet.width_mm
-            or item.width_mm <= req.pallet.width_mm
-        )
-        if not fits:
-            warnings.append(
-                f"SKU {item.sku}: box ({item.length_mm}x{item.width_mm}) may not fit pallet footprint."
+            continue
+        if not _fits_pallet(item, req):
+            errors.append(
+                f"SKU {item.sku}: box ({item.length_mm}x{item.width_mm}x{item.height_mm}) cannot fit pallet in any allowed rotation."
             )
-    return warnings
+    return errors, warnings
 
 
 def _boxes_overlap(ax, ay, az, al, aw, ah, bx, by, bz, bl, bw, bh) -> bool:

@@ -78,7 +78,7 @@ export default function ManualAdjustToolbar({
   onToggleMagneticSnap, onSetMagneticSnapStrength,
   onUndo, onRedo, onReset, onSave, onExit,
 }: Props) {
-  const upd = (k: keyof ManualAdjustmentSettings, v: number) =>
+  const upd = (k: keyof ManualAdjustmentSettings, v: number | boolean) =>
     onSettingsChange({ ...settings, [k]: v });
 
   return (
@@ -135,6 +135,21 @@ export default function ManualAdjustToolbar({
       </Btn>
       <Btn active={snapToThreshold} disabled={unlockedMode} onClick={() => onSnapToThresholdChange(!snapToThreshold)}>
         Snap→Edge
+      </Btn>
+
+      <Btn
+        active={settings.do_not_allow_stability_issues}
+        onClick={() => upd("do_not_allow_stability_issues", !settings.do_not_allow_stability_issues)}
+        title="When on, unstable or floating manual layouts are blocked from save and invalid releases revert"
+      >
+        Stability Strict {settings.do_not_allow_stability_issues ? "ON" : "OFF"}
+      </Btn>
+      <Btn
+        active={settings.prefer_larger_base}
+        onClick={() => upd("prefer_larger_base", !settings.prefer_larger_base)}
+        title="When on, rotate uses the largest allowed base orientation"
+      >
+        Larger Base {settings.prefer_larger_base ? "ON" : "OFF"}
       </Btn>
 
       <div className="w-px h-5 bg-indigo-700" />

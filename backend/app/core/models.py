@@ -14,7 +14,21 @@ class Box:
     width: float   # mm
     height: float  # mm
     weight: float  # kg
+    original_length: Optional[float] = None
+    original_width: Optional[float] = None
+    original_height: Optional[float] = None
+    nia_item_code: Optional[str] = None
+    description_of_goods: Optional[str] = None
     lot_no: Optional[str] = None
+    line_id: Optional[str] = None
+    source_row: Optional[int] = None
+    store_no: Optional[str] = None
+    dc_no: Optional[str] = None
+    center_label: Optional[str] = None
+    center_expected_cartons: Optional[float] = None
+    original_quantity: Optional[float] = None
+    partial_carton: bool = False
+    carton_index: Optional[int] = None
     expiry_date: Optional[str] = None
     location: Optional[str] = None
     requested_delivery_date: Optional[str] = None
@@ -30,30 +44,22 @@ class Box:
     layer: int = 1
     pick_sequence: int = 0
 
+    def __post_init__(self) -> None:
+        if self.original_length is None:
+            self.original_length = self.length
+        if self.original_width is None:
+            self.original_width = self.width
+        if self.original_height is None:
+            self.original_height = self.height
+
     @property
     def volume(self) -> float:
         return self.length * self.width * self.height
 
     def rotations(self, allow: bool = True) -> List[Tuple[float, float, float, str]]:
         """Return possible (l, w, h, label) rotations."""
-        l, w, h = self.length, self.width, self.height
-        if not allow:
-            return [(l, w, h, "LWH")]
-        seen = set()
-        result = []
-        for dims, label in [
-            ((l, w, h), "LWH"),
-            ((l, h, w), "LHW"),
-            ((w, l, h), "WLH"),
-            ((w, h, l), "WHL"),
-            ((h, l, w), "HLW"),
-            ((h, w, l), "HWL"),
-        ]:
-            key = tuple(sorted(dims))
-            if key not in seen:
-                seen.add(key)
-                result.append(dims + (label,))
-        return result
+        from app.algorithms.rotations import get_allowed_rotations
+        return get_allowed_rotations(self, allow_rotation=allow)
 
 
 @dataclass

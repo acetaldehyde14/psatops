@@ -1,6 +1,6 @@
 "use client";
 import type { PalletResult } from "@/lib/types";
-import { getSkuColor } from "@/lib/mockData";
+import { getSkuColor } from "@/lib/skuColors";
 
 interface Props {
   pallet: PalletResult;

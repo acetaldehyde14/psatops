@@ -3,7 +3,7 @@ import { memo, useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { Canvas, ThreeEvent, useThree } from "@react-three/fiber";
 import { OrbitControls, Line } from "@react-three/drei";
 import type { BoxResult, PalletResult, ManualAdjustmentSettings } from "@/lib/types";
-import { getSkuColor } from "@/lib/mockData";
+import { getSkuColor } from "@/lib/skuColors";
 import BoxInspectorPanel from "./BoxInspectorPanel";
 import LayerGuideGrid, { SCALE } from "./LayerGuideGrid";
 import { applySnappingDetailed, applyMagneticSnap, snapToHorizontalGap, type SnapGuide } from "@/lib/snapping";
@@ -23,6 +23,7 @@ interface Props {
   settings?: ManualAdjustmentSettings;
   invalidBoxIds?: Set<string>;
   selectedBoxIds?: Set<string>;
+  issueBoxIds?: Set<string>;
   highlightedSku?: string;
   colorBySku?: Record<string, string>;
   snapToBoxEdges?: boolean;
@@ -154,6 +155,7 @@ interface BoxMeshProps {
   selected: boolean;
   hovered: boolean;
   invalid: boolean;
+  issue: boolean;
   legendHighlighted: boolean;
   viewMode: ViewMode;
   editMode: boolean;
@@ -170,7 +172,7 @@ interface BoxMeshProps {
 
 const BoxMesh = memo(function BoxMesh({
   box, selected, hovered, invalid, legendHighlighted, viewMode, editMode, orbitActive, colorBySku,
-  isLockedRow, registerController,
+  issue, isLockedRow, registerController,
   onHoverChange,
   onPointerDown, onDragMove, onDragUp, onClick,
 }: BoxMeshProps) {
@@ -181,10 +183,10 @@ const BoxMesh = memo(function BoxMesh({
   const skuColor = useMemo(() => colorBySku?.[box.sku] ?? getSkuColor(box.sku), [box.sku, colorBySku]);
   const isXray = viewMode === "xray";
   const isSolid = viewMode === "solid";
-  const baseColor = invalid ? "#ef4444" : skuColor;
+  const baseColor = invalid ? "#ef4444" : issue ? "#f97316" : skuColor;
   // In xray mode we do NOT auto-outline every box — too much visual clutter.
-  const showOutline = invalid || selected || hovered || legendHighlighted || isLockedRow;
-  const outlineColor = invalid ? "#ef4444" : selected ? "#2563eb" : isLockedRow ? "#9333ea" : "#f59e0b";
+  const showOutline = invalid || issue || selected || hovered || legendHighlighted || isLockedRow;
+  const outlineColor = invalid ? "#ef4444" : issue ? "#f97316" : selected ? "#2563eb" : isLockedRow ? "#9333ea" : "#f59e0b";
 
   const px = (box.x_mm + box.length_mm / 2) * SCALE;
   const py = (box.y_mm + box.width_mm / 2) * SCALE;
@@ -198,6 +200,14 @@ const BoxMesh = memo(function BoxMesh({
       (box.length_mm + 8) * SCALE,
       (box.width_mm + 8) * SCALE,
       (box.height_mm + 8) * SCALE,
+    )),
+    [box.height_mm, box.length_mm, box.width_mm],
+  );
+  const selectionOutlineGeometry = useMemo(
+    () => new THREE.EdgesGeometry(new THREE.BoxGeometry(
+      (box.length_mm + 18) * SCALE,
+      (box.width_mm + 18) * SCALE,
+      (box.height_mm + 18) * SCALE,
     )),
     [box.height_mm, box.length_mm, box.width_mm],
   );
@@ -227,11 +237,11 @@ const BoxMesh = memo(function BoxMesh({
     }
 
     material.emissive.set(
-      isPreviewInvalid || invalid ? "#ef4444" : selected ? color : legendHighlighted || hovered ? "#f59e0b" : "#000000",
+      isPreviewInvalid || invalid ? "#ef4444" : issue ? "#f97316" : selected ? color : legendHighlighted || hovered ? "#f59e0b" : "#000000",
     );
-    material.emissiveIntensity = isPreviewInvalid ? 0.3 : selected ? 0.35 : legendHighlighted || hovered ? 0.16 : 0;
+    material.emissiveIntensity = isPreviewInvalid ? 0.3 : issue ? 0.28 : selected ? 0.35 : legendHighlighted || hovered ? 0.16 : 0;
     material.needsUpdate = true;
-  }, [baseColor, hovered, invalid, isSolid, isXray, legendHighlighted, selected]);
+  }, [baseColor, hovered, invalid, issue, isSolid, isXray, legendHighlighted, selected]);
 
   const setRenderedPosition = useCallback((xMm: number, yMm: number) => {
     const x = (xMm + box.length_mm / 2) * SCALE;
@@ -266,7 +276,8 @@ const BoxMesh = memo(function BoxMesh({
   useEffect(() => () => {
     geometry.dispose();
     outlineGeometry.dispose();
-  }, [geometry, outlineGeometry]);
+    selectionOutlineGeometry.dispose();
+  }, [geometry, outlineGeometry, selectionOutlineGeometry]);
 
   const isExactHit = useCallback((e: ThreeEvent<PointerEvent | MouseEvent>) => {
     return e.intersections[0]?.object === meshRef.current;
@@ -313,8 +324,8 @@ const BoxMesh = memo(function BoxMesh({
           polygonOffset={isXray}
           polygonOffsetFactor={isXray ? 1 : 0}
           polygonOffsetUnits={isXray ? 1 : 0}
-          emissive={invalid ? "#ef4444" : selected ? baseColor : hovered || legendHighlighted ? "#f59e0b" : "#000000"}
-          emissiveIntensity={invalid ? 0.3 : selected ? 0.35 : hovered || legendHighlighted ? 0.16 : 0}
+          emissive={invalid ? "#ef4444" : issue ? "#f97316" : selected ? baseColor : hovered || legendHighlighted ? "#f59e0b" : "#000000"}
+          emissiveIntensity={invalid ? 0.3 : issue ? 0.28 : selected ? 0.35 : hovered || legendHighlighted ? 0.16 : 0}
         />
       </mesh>
       {showOutline && (
@@ -325,6 +336,11 @@ const BoxMesh = memo(function BoxMesh({
             transparent
             opacity={hovered && !selected && !invalid ? 0.78 : 1}
           />
+        </lineSegments>
+      )}
+      {selected && issue && (
+        <lineSegments position={[px, py, pz]} geometry={selectionOutlineGeometry}>
+          <lineBasicMaterial color="#2563eb" linewidth={3} transparent opacity={0.95} />
         </lineSegments>
       )}
     </>
@@ -362,9 +378,12 @@ export default function PalletViewer3D({
     snap_grid_mm: 50,
     drag_sensitivity: 0.35,
     autoFitSearchRadiusMm: 150,
+    do_not_allow_stability_issues: true,
+    prefer_larger_base: false,
   },
   invalidBoxIds = new Set(),
   selectedBoxIds = new Set(),
+  issueBoxIds = new Set(),
   highlightedSku,
   colorBySku,
   snapToBoxEdges = false,
@@ -461,12 +480,12 @@ export default function PalletViewer3D({
 
   const handleBoxClick = useCallback((e: ThreeEvent<MouseEvent>, box: BoxResult) => {
     e.stopPropagation();
-    if (editMode && onBoxClick) {
+    if (onBoxClick) {
       onBoxClick(box, e.ctrlKey || e.metaKey || e.shiftKey);
     } else {
       setViewSelected((prev) => prev?.box_id === box.box_id ? null : box);
     }
-  }, [editMode, onBoxClick]);
+  }, [onBoxClick]);
 
   const buildCandidate = useCallback((session: DragSession, pointMm: { x: number; y: number }) => {
     const sensitivity = settings.drag_sensitivity ?? 0.35;
@@ -840,11 +859,12 @@ export default function PalletViewer3D({
   }, []);
 
   return (
-    <div className="relative w-full h-full">
+    <div className="relative h-full min-h-[560px] w-full">
       <Canvas
+        className="h-full w-full"
         camera={{ position: [cx, cy - dist, cz], fov: 40, up: [0, 0, 1] }}
         shadows
-        style={{ background: "#f8fafc" }}
+        style={{ background: "#f8fafc", height: "100%", width: "100%" }}
         onClick={() => {
           if (!editMode) setViewSelected(null);
         }}
@@ -915,9 +935,10 @@ export default function PalletViewer3D({
           <BoxMesh
             key={`${box.box_id}-${viewMode}`}
             box={box}
-            selected={editMode ? selectedBoxIds.has(box.box_id) : viewSelected?.box_id === box.box_id}
+            selected={selectedBoxIds.has(box.box_id) || (!onBoxClick && viewSelected?.box_id === box.box_id)}
             hovered={hoveredBoxId === box.box_id}
             invalid={invalidBoxIds.has(box.box_id)}
+            issue={issueBoxIds.has(box.box_id)}
             legendHighlighted={highlightedSku === box.sku}
             viewMode={viewMode}
             isLockedRow={isBoxInLockedRow(box.box_id, lockedRows)}
@@ -976,7 +997,7 @@ export default function PalletViewer3D({
         Reset Camera
       </button>
 
-      {!editMode && (
+      {!editMode && !onBoxClick && (
         <BoxInspectorPanel box={viewSelected} onClose={() => setViewSelected(null)} />
       )}
     </div>

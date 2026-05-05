@@ -4,14 +4,17 @@ import { useParams } from "next/navigation";
 import { getJob, exportCsvUrl, exportJsonData, patchLayout } from "@/lib/api";
 import type {
   PalletiseResponse, PalletResult, BoxResult,
-  ManualAdjustmentSettings, LayoutValidationResult,
+  ManualAdjustmentSettings, LayoutValidationResult, StabilityIssue, WarningItem,
 } from "@/lib/types";
 import ResultSummaryCards from "@/components/ResultSummaryCards";
 import OrderTable from "@/components/OrderTable";
 import EditPanel from "@/components/EditPanel";
+import StabilityIssuesPanel from "@/components/StabilityIssuesPanel";
 import ManualAdjustToolbar from "@/components/ManualAdjustToolbar";
 import type { SelectionMode } from "@/components/ManualAdjustToolbar";
 import SkuLegend from "@/components/SkuLegend";
+import CollapsibleDiagnosticsPanel from "@/components/CollapsibleDiagnosticsPanel";
+import WarningsPanel from "@/components/WarningsPanel";
 import { validateLayout } from "@/lib/layoutValidation";
 import {
   compactRow as compactRowLayout,
@@ -23,7 +26,9 @@ import {
   unlockRow as unlockRowFn,
   type LockedRow,
 } from "@/lib/rowLocking";
-import { getSkuColor } from "@/lib/mockData";
+import { getSkuColor } from "@/lib/skuColors";
+import { layFlatLargestBase, rotateBox90, standUpright } from "@/lib/boxTransforms";
+import type { RotationAxis } from "@/lib/types";
 import dynamic from "next/dynamic";
 import clsx from "clsx";
 
@@ -34,13 +39,69 @@ function clonePallets(pallets: PalletResult[]): PalletResult[] {
   return JSON.parse(JSON.stringify(pallets));
 }
 
-function rotateBox(box: BoxResult): BoxResult {
-  return {
-    ...box,
-    length_mm: box.width_mm,
-    width_mm: box.length_mm,
-    rotation: box.rotation === "LWH" ? "WLH" : "LWH",
-  };
+function totalsMatch(a?: Record<string, number>, b?: Record<string, number>): boolean {
+  const left = a ?? {};
+  const right = b ?? {};
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of Array.from(keys)) {
+    if ((left[key] ?? 0) !== (right[key] ?? 0)) return false;
+  }
+  return true;
+}
+
+function warningMessage(warning: string | WarningItem): string {
+  return typeof warning === "string" ? warning : warning.message;
+}
+
+function getLayerTopZ(pallet: PalletResult, targetLayer: number, movingBoxIds: Set<string>): number | null {
+  if (targetLayer === 0) return 0;
+  const stationaryBoxes = pallet.boxes.filter((box) => !movingBoxIds.has(box.box_id));
+  const explicitLayerBoxes = stationaryBoxes.filter((box) => box.layer === targetLayer);
+  if (explicitLayerBoxes.length > 0) {
+    return Math.max(...explicitLayerBoxes.map((box) => box.z_mm + box.height_mm));
+  }
+
+  const zLevels = Array.from(new Set(stationaryBoxes.map((box) => Math.round(box.z_mm * 1000) / 1000))).sort((a, b) => a - b);
+  const targetZ = zLevels[targetLayer - 1];
+  if (targetZ === undefined) return null;
+  const derivedLayerBoxes = stationaryBoxes.filter((box) => Math.abs(box.z_mm - targetZ) < 0.5);
+  if (derivedLayerBoxes.length === 0) return null;
+  return Math.max(...derivedLayerBoxes.map((box) => box.z_mm + box.height_mm));
+}
+
+function fallbackStabilityIssues(result: PalletiseResponse | null): StabilityIssue[] {
+  if (!result) return [];
+  const structured = result.stability?.issues?.length ? result.stability.issues : result.summary.stability_issues ?? [];
+  if (structured.length > 0) {
+    return structured.map((issue, index) => ({
+      ...issue,
+      id: issue.id ?? `${issue.type}-${issue.box_id ?? "layout"}-${issue.pallet_no ?? "p"}-${index}`,
+    }));
+  }
+
+  const boxToPallet = new Map<string, { pallet_no: number; sku?: string }>();
+  for (const pallet of result.pallets) {
+    for (const box of pallet.boxes) boxToPallet.set(box.box_id, { pallet_no: pallet.pallet_no, sku: box.sku });
+  }
+
+  return result.summary.warnings
+    .flatMap((warning, index) => {
+      const message = warningMessage(warning);
+      const box_id = message.match(/Box ['"]?([A-Za-z0-9_-]+)['"]?/i)?.[1];
+      if (!box_id) return [];
+      const meta = boxToPallet.get(box_id);
+      const type = message.toLowerCase().includes("support") ? "unstable" : "floating";
+      const severity = type === "floating" ? "error" : "warning";
+      return [{
+        id: `${type}-${box_id}-${index}`,
+        type,
+        severity,
+        box_id,
+        pallet_no: meta?.pallet_no,
+        sku: meta?.sku,
+        message,
+      } satisfies StabilityIssue];
+    });
 }
 
 const DEFAULT_SETTINGS: ManualAdjustmentSettings = {
@@ -49,6 +110,8 @@ const DEFAULT_SETTINGS: ManualAdjustmentSettings = {
   snap_grid_mm: 50,
   drag_sensitivity: 0.35,
   autoFitSearchRadiusMm: 150,
+  do_not_allow_stability_issues: true,
+  prefer_larger_base: false,
 };
 
 const PALLET_SPEC = { length_mm: 1200, width_mm: 1100, max_height_mm: 1150, max_weight_kg: 1500 };
@@ -88,6 +151,14 @@ export default function ResultsPage() {
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [legendSku, setLegendSku] = useState<string | undefined>();
   const [legendHoverSku, setLegendHoverSku] = useState<string | undefined>();
+  const [legendScope, setLegendScope] = useState<"current" | "all">("current");
+  const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
+  const [highlightedIssueBoxIds, setHighlightedIssueBoxIds] = useState<Set<string>>(new Set());
+  const [activeIssue, setActiveIssue] = useState<StabilityIssue | null>(null);
+  const [showInspectorPanel, setShowInspectorPanel] = useState(false);
+  const [inspectorMode, setInspectorMode] = useState<"readonly" | "edit">("readonly");
+  const [showStabilityIssuesPanel, setShowStabilityIssuesPanel] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
 
   useEffect(() => {
     if (!jobId) return;
@@ -104,9 +175,16 @@ export default function ResultsPage() {
   // Live validation while in edit mode
   useEffect(() => {
     if (editMode && editedPallets.length > 0) {
-      setValidation(validateLayout(editedPallets, PALLET_SPEC, settings));
+      setValidation(validateLayout(
+        editedPallets,
+        PALLET_SPEC,
+        settings,
+        unlockedMode
+          ? { mode: "soft", allowOutOfBounds: true, allowOverlap: true, allowFloating: true }
+          : { mode: "strict" },
+      ));
     }
-  }, [editedPallets, editMode, settings]);
+  }, [editedPallets, editMode, settings, unlockedMode]);
 
   // ── History helpers ───────────────────────────────────────────────────────
   const pushHistory = useCallback((current: PalletResult[]) => {
@@ -122,6 +200,45 @@ export default function ResultsPage() {
       return next;
     });
   }, [pushHistory]);
+
+  const commitValidatedPallets = useCallback((
+    fn: (draft: PalletResult[]) => string | void,
+    failureMessage: string,
+  ) => {
+    setEditedPallets((prev) => {
+      const next = clonePallets(prev);
+      const message = fn(next);
+      if (message) {
+        setSaveMsg(message);
+        return prev;
+      }
+      const check = validateLayout(
+        next,
+        PALLET_SPEC,
+        settings,
+        unlockedMode
+          ? { mode: "soft", allowOutOfBounds: true, allowOverlap: true, allowFloating: true }
+          : { mode: "strict" },
+      );
+      setValidation(check);
+      if (unlockedMode) {
+        pushHistory(prev);
+        setFuture([]);
+        setSaveMsg(check.errors.length > 0 || check.warnings.length > 0
+          ? "Transform applied in Unlocked Mode. Move boxes back into a valid position before saving."
+          : null);
+        return next;
+      }
+      if (!check.isValid) {
+        setSaveMsg(`${failureMessage} ${check.errors[0] ?? ""}`.trim());
+        return prev;
+      }
+      pushHistory(prev);
+      setFuture([]);
+      setSaveMsg(null);
+      return next;
+    });
+  }, [pushHistory, settings, unlockedMode]);
 
   // ── Box click / selection ─────────────────────────────────────────────────
   const handleBoxClick = useCallback((box: BoxResult, multi: boolean) => {
@@ -143,7 +260,21 @@ export default function ResultsPage() {
     } else {
       setSelectedBoxIds(new Set([box.box_id]));
     }
-  }, [editedPallets, selectedPallet, selectionMode]);
+    setSelectedBoxId(box.box_id);
+    setShowInspectorPanel(true);
+    setInspectorMode(editMode ? "edit" : "readonly");
+  }, [editMode, editedPallets, selectedPallet, selectionMode]);
+
+  const handleViewerBoxClick = useCallback((box: BoxResult, multi: boolean) => {
+    if (editMode) {
+      handleBoxClick(box, multi);
+      return;
+    }
+    setSelectedBoxIds(new Set([box.box_id]));
+    setSelectedBoxId(box.box_id);
+    setShowInspectorPanel(true);
+    setInspectorMode("readonly");
+  }, [editMode, handleBoxClick]);
 
   // ── Drag end from viewer ──────────────────────────────────────────────────
   const handleBoxDragEnd = useCallback((moves: Array<{ box_id: string; x: number; y: number }>) => {
@@ -175,31 +306,66 @@ export default function ResultsPage() {
     });
   }, [mutatePallets]);
 
-  // ── Rotate 90° ────────────────────────────────────────────────────────────
-  const handleRotate = useCallback((boxIds: string[], palletIdx: number) => {
-    mutatePallets((draft) => {
+  // ── Rotation ──────────────────────────────────────────────────────────────
+  const handleRotate = useCallback((boxIds: string[], palletIdx: number, axis: RotationAxis) => {
+    commitValidatedPallets((draft) => {
       const p = draft[palletIdx];
-      if (!p) return;
+      if (!p) return "Pallet not found.";
+      if ((axis === "x" || axis === "y") && p.boxes.some((box) => boxIds.includes(box.box_id) && box.stand_upright_only)) {
+        return "This SKU is stand-upright-only. X/Y rotation is not allowed.";
+      }
       for (const id of boxIds) {
         const box = p.boxes.find((b) => b.box_id === id);
-        if (box) Object.assign(box, rotateBox(box));
+        if (box) Object.assign(box, rotateBox90(box, axis));
       }
-    });
-  }, [mutatePallets]);
+    }, "Rotation would create an invalid layout. Switch to Unlocked Mode to force it.");
+  }, [commitValidatedPallets]);
+
+  const handleLayFlat = useCallback((boxIds: string[], palletIdx: number) => {
+    commitValidatedPallets((draft) => {
+      const p = draft[palletIdx];
+      if (!p) return "Pallet not found.";
+      for (const id of boxIds) {
+        const box = p.boxes.find((b) => b.box_id === id);
+        if (box) Object.assign(box, layFlatLargestBase(box));
+      }
+    }, "Lay flat would create an invalid layout. Switch to Unlocked Mode to force it.");
+  }, [commitValidatedPallets]);
+
+  const handlePutOnLayer = useCallback((boxIds: string[], palletIdx: number) => {
+    const input = window.prompt("Put selected box on top of which layer? Use 0 for floor.", "1");
+    if (input === null) return;
+    const targetLayer = Number(input);
+    if (!Number.isInteger(targetLayer) || targetLayer < 0) {
+      setSaveMsg("Layer must be an integer greater than or equal to 0.");
+      return;
+    }
+
+    commitValidatedPallets((draft) => {
+      const p = draft[palletIdx];
+      if (!p) return "Pallet not found.";
+      const movingIds = new Set(boxIds);
+      const movingBoxes = p.boxes.filter((box) => movingIds.has(box.box_id));
+      if (movingBoxes.length === 0) return "No selected boxes found.";
+      const targetZ = getLayerTopZ(p, targetLayer, movingIds);
+      if (targetZ === null) return `Layer ${targetLayer} does not exist.`;
+      const minZ = Math.min(...movingBoxes.map((box) => box.z_mm));
+      const deltaZ = targetZ - minZ;
+      for (const box of movingBoxes) {
+        box.z_mm = Math.max(0, box.z_mm + deltaZ);
+        box.layer = targetLayer === 0 ? 1 : targetLayer + 1;
+      }
+    }, `Cannot put box on layer ${targetLayer} at current X/Y because it overlaps or is unsupported. Switch to Unlocked Mode to force it.`);
+  }, [commitValidatedPallets]);
 
   // ── Stand Upright ─────────────────────────────────────────────────────────
   const handleStandUpright = useCallback((boxId: string, palletIdx: number) => {
-    mutatePallets((draft) => {
+    commitValidatedPallets((draft) => {
       const box = draft[palletIdx]?.boxes.find((b) => b.box_id === boxId);
-      if (!box) return;
-      const origH = box.original_height_mm ?? box.height_mm;
-      box.height_mm = origH;
-      const dims = [box.length_mm, box.width_mm].sort((a, b) => a - b);
-      box.length_mm = dims[1];
-      box.width_mm = dims[0];
-      box.rotation = "LWH";
-    });
-  }, [mutatePallets]);
+      if (!box) return "Box not found.";
+      Object.assign(box, standUpright(box));
+    }, "Cannot stand upright because the adjusted layout is invalid.");
+  }, [commitValidatedPallets]);
 
   // ── Delete ────────────────────────────────────────────────────────────────
   const handleDelete = useCallback((boxIds: string[], palletIdx: number) => {
@@ -352,9 +518,11 @@ export default function ResultsPage() {
         })),
         settings,
       });
-      setIsManuallyAdjusted(true);
+      setIsManuallyAdjusted(res.manually_adjusted);
       setSaveMsg(res.validation.is_valid
         ? "Saved successfully ✓"
+        : res.status === "rejected"
+        ? "Save blocked — resolve stability issues or disable strict stability"
         : "Saved with errors — review highlighted boxes");
     } catch {
       setSaveMsg("Save failed. Is the backend running?");
@@ -370,6 +538,12 @@ export default function ResultsPage() {
     setHistory([]);
     setFuture([]);
     setSelectedBoxIds(new Set());
+    setSelectedBoxId(null);
+    setHighlightedIssueBoxIds(new Set());
+    setActiveIssue(null);
+    setShowStabilityIssuesPanel(false);
+    setShowInspectorPanel(true);
+    setInspectorMode("edit");
     setValidation(null);
     setSaveMsg(null);
     setEditMode(true);
@@ -378,31 +552,90 @@ export default function ResultsPage() {
   const exitEditMode = () => {
     setEditMode(false);
     setSelectedBoxIds(new Set());
+    setSelectedBoxId(null);
+    setShowInspectorPanel(false);
+    setInspectorMode("readonly");
     setValidation(null);
     setSaveMsg(null);
   };
 
   const activePallets = editMode ? editedPallets : result?.pallets ?? [];
   const pallet = activePallets[selectedPallet];
+  const stabilityIssues = useMemo(() => fallbackStabilityIssues(result), [result]);
+  const issueBoxIds = useMemo(
+    () => new Set(stabilityIssues.map((issue) => issue.box_id).filter((id): id is string => Boolean(id))),
+    [stabilityIssues],
+  );
+  const allBoxes = useMemo(() => activePallets.flatMap((p) => p.boxes), [activePallets]);
+  const legendBoxes = legendScope === "all" ? allBoxes : pallet?.boxes ?? [];
   const maxLayer = pallet ? Math.max(...pallet.boxes.map((b) => b.layer), 1) : 1;
   const invalidIds = new Set<string>(validation?.invalidBoxIds ?? []);
   const selectedBoxIdsArr = Array.from(selectedBoxIds);
+  const selectedIssueMessages = useMemo(() => {
+    const id = selectedBoxId ?? selectedBoxIdsArr[0];
+    if (!id) return [];
+    const issueMessages = stabilityIssues
+      .filter((issue) => issue.box_id === id)
+      .map((issue) => issue.message);
+    const validationMessages = validation?.issues
+      .filter((issue) => issue.box_id === id)
+      .map((issue) => issue.message) ?? [];
+    return Array.from(new Set([...issueMessages, ...validationMessages]));
+  }, [selectedBoxId, selectedBoxIdsArr, stabilityIssues, validation]);
+  const selectIssue = useCallback((issue: StabilityIssue) => {
+    setTab("3d");
+    setShowStabilityIssuesPanel(true);
+    setShowInspectorPanel(true);
+    setInspectorMode("readonly");
+    setActiveIssue(issue);
+    if (issue.box_id) {
+      setSelectedBoxId(issue.box_id);
+      setSelectedBoxIds(new Set([issue.box_id]));
+    }
+    if (issue.pallet_no !== undefined) {
+      const palletIndex = activePallets.findIndex((p) => p.pallet_no === issue.pallet_no);
+      if (palletIndex >= 0) {
+        setSelectedPallet(palletIndex);
+        setLayerFilter(null);
+      }
+    }
+  }, [activePallets]);
+  const openStabilityIssues = useCallback(() => {
+    if (stabilityIssues.length === 0) return;
+    setHighlightedIssueBoxIds(issueBoxIds);
+    const first = stabilityIssues.find((issue) => issue.box_id) ?? stabilityIssues[0];
+    selectIssue(first);
+  }, [issueBoxIds, selectIssue, stabilityIssues]);
   const colorBySku = useMemo(() => {
     const colors: Record<string, string> = {};
-    for (const box of pallet?.boxes ?? []) colors[box.sku] = getSkuColor(box.sku);
+    for (const box of allBoxes) colors[box.sku] = getSkuColor(box.sku);
     return colors;
-  }, [pallet?.boxes]);
+  }, [allBoxes]);
   const highlightedSku = legendHoverSku ?? legendSku;
+  const responseSkuTotals = result?.summary.sku_totals ?? {};
+  const requestSkuTotals = result?.summary.request_sku_totals ?? {};
+  const responseTotalBoxes = result?.summary.total_boxes ?? 0;
+  const requestTotalBoxes = result?.summary.request_total_boxes ?? responseTotalBoxes;
+  const boxCountMismatch = requestTotalBoxes !== responseTotalBoxes;
+  const skuTotalsMismatch = !totalsMatch(requestSkuTotals, responseSkuTotals);
+  const debugMismatch = boxCountMismatch || skuTotalsMismatch;
+  const diagnosticIssueCount = (boxCountMismatch ? 1 : 0) + (skuTotalsMismatch ? 1 : 0);
+
+  useEffect(() => {
+    if (debugMismatch) setDiagnosticsOpen(true);
+  }, [debugMismatch]);
 
   if (error) return <div className="p-8 text-red-600">{error}</div>;
   if (!result) return <div className="p-8 text-gray-500">Loading…</div>;
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex min-h-screen flex-col bg-white">
       {/* Top bar */}
       <div className="flex items-center justify-between px-6 py-3 bg-white border-b border-gray-200 flex-shrink-0 flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Results — {result.order_id}</h1>
+          <h1 className="text-xl font-bold text-gray-900">
+            {result.order_id ? `Results - ${result.order_id}` : "Results"}
+          </h1>
           <p className="text-gray-400 text-xs">
             <code className="font-mono bg-gray-100 px-1 rounded">{result.job_id}</code>
             {" · "}{result.algorithm_used}
@@ -411,6 +644,12 @@ export default function ResultsPage() {
                 Manually Adjusted
               </span>
             )}
+            <span className="ml-2 bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded text-xs font-medium">
+              Stability Strict: {result.constraints_used?.do_not_allow_stability_issues ?? true ? "ON" : "OFF"}
+            </span>
+            <span className="ml-2 bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded text-xs font-medium">
+              Larger Base Preference: {result.constraints_used?.prefer_larger_base ? "ON" : "OFF"}
+            </span>
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -480,22 +719,75 @@ export default function ResultsPage() {
       )}
 
       {/* Summary */}
-      <div className="px-6 py-3 border-b border-gray-100 flex-shrink-0">
-        <ResultSummaryCards summary={result.summary} />
+      <div className="px-6 py-2 border-b border-gray-100 flex-shrink-0">
+        <ResultSummaryCards summary={result.summary} onStabilityClick={openStabilityIssues} />
       </div>
 
-      {result.summary.warnings.length > 0 && (
-        <div className="px-6 py-2 bg-yellow-50 border-b border-yellow-200 text-xs text-yellow-700 flex-shrink-0">
-          {result.summary.warnings.slice(0, 3).map((w, i) => <span key={i} className="mr-4">{w}</span>)}
-          {result.summary.warnings.length > 3 && <span>+{result.summary.warnings.length - 3} more</span>}
+      <WarningsPanel
+        warnings={result.summary.warnings}
+        jobId={result.job_id}
+        storageKey={`palletisation:dismissedWarnings:${result.job_id}`}
+      />
+
+      {(result.unplaced_boxes?.length ?? 0) > 0 && (
+        <div className="px-6 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700 flex-shrink-0">
+          <span className="font-semibold mr-3">Unplaced boxes:</span>
+          {result.unplaced_boxes?.slice(0, 5).map((box) => (
+            <span key={box.box_id} className="mr-4">{box.box_id} ({box.sku}): {box.reason}</span>
+          ))}
+          {(result.unplaced_boxes?.length ?? 0) > 5 && <span>+{(result.unplaced_boxes?.length ?? 0) - 5} more</span>}
         </div>
       )}
 
+      <CollapsibleDiagnosticsPanel
+        open={diagnosticsOpen}
+        onOpenChange={setDiagnosticsOpen}
+        mismatchCount={diagnosticIssueCount}
+        diagnostics={
+          <div className={clsx("space-y-2", debugMismatch ? "text-red-700" : "text-slate-600")}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div>Request boxes: {requestTotalBoxes} | Response boxes: {responseTotalBoxes}</div>
+              <div>Request SKUs: {JSON.stringify(requestSkuTotals)} | Response SKUs: {JSON.stringify(responseSkuTotals)}</div>
+            </div>
+            {Object.keys(result.summary.center_totals ?? {}).length > 0 && (
+              <div className="overflow-x-auto">
+                <div className="font-semibold mb-1">Centers</div>
+                <table className="min-w-full text-left">
+                  <thead className="text-[11px] uppercase text-slate-500">
+                    <tr>
+                      <th className="pr-4 py-1">Center</th>
+                      <th className="pr-4 py-1">Lines</th>
+                      <th className="pr-4 py-1">Expected</th>
+                      <th className="pr-4 py-1">Expanded</th>
+                      <th className="pr-4 py-1">Raw Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(result.summary.center_totals ?? {}).map(([label, center]) => (
+                      <tr key={label} className="border-t border-slate-200">
+                        <td className="pr-4 py-1 whitespace-nowrap">{label}</td>
+                        <td className="pr-4 py-1">{center.input_lines}</td>
+                        <td className="pr-4 py-1">{center.expected_cartons ?? "—"}</td>
+                        <td className="pr-4 py-1">{center.expanded_cartons}</td>
+                        <td className="pr-4 py-1">{center.quantity_sum_raw}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {result.summary.warnings.length > 0 && (
+              <div>Warnings in response: {result.summary.warnings.length}</div>
+            )}
+          </div>
+        }
+      />
+
       {/* Pallet tabs */}
-      <div className="flex gap-2 px-6 py-2 flex-shrink-0 flex-wrap border-b border-gray-100">
+      <div className="flex gap-2 px-6 py-1.5 flex-shrink-0 flex-wrap border-b border-gray-100">
         {activePallets.map((p, i) => (
           <button key={i}
-            onClick={() => { setSelectedPallet(i); setLayerFilter(null); setSelectedBoxIds(new Set()); }}
+            onClick={() => { setSelectedPallet(i); setLayerFilter(null); setSelectedBoxIds(new Set()); setSelectedBoxId(null); setActiveIssue(null); }}
             className={clsx("px-3 py-1.5 rounded text-sm font-medium border transition-colors",
               selectedPallet === i
                 ? "bg-blue-600 text-white border-blue-600"
@@ -506,8 +798,15 @@ export default function ResultsPage() {
       </div>
 
       {/* Main content */}
-      <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex flex-1 min-h-[640px] overflow-hidden">
+        {showStabilityIssuesPanel && (
+          <StabilityIssuesPanel
+            issues={stabilityIssues}
+            selectedIssueId={activeIssue?.id}
+            onIssueClick={selectIssue}
+          />
+        )}
+        <div className="flex-1 flex min-h-[640px] flex-col overflow-hidden">
           {/* View tabs */}
           <div className="flex gap-1 px-6 pt-2 border-b border-gray-200 flex-shrink-0">
             {(["3d", "table"] as const).map((t) => (
@@ -520,7 +819,7 @@ export default function ResultsPage() {
           </div>
 
           {tab === "3d" && pallet && (
-            <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 flex min-h-[640px] flex-col overflow-hidden">
               {/* Render mode tabs */}
               <div className="flex items-center gap-1 px-4 py-1.5 bg-white border-b border-gray-100 flex-shrink-0">
                 {(["normal", "xray", "solid"] as const).map((mode) => (
@@ -553,8 +852,8 @@ export default function ResultsPage() {
                   </button>
                 ))}
               </div>
-              <div className="flex-1 flex min-h-0">
-                <div className="flex-1 relative min-w-0">
+              <div className="flex-1 flex min-h-[560px]">
+                <div className="flex-1 relative min-w-0 min-h-[560px]">
                   <PalletViewer3D
                     pallet={pallet}
                     palletSpec={PALLET_SPEC}
@@ -564,6 +863,7 @@ export default function ResultsPage() {
                     settings={settings}
                     invalidBoxIds={invalidIds}
                     selectedBoxIds={selectedBoxIds}
+                    issueBoxIds={highlightedIssueBoxIds}
                     highlightedSku={highlightedSku}
                     colorBySku={colorBySku}
                     snapToBoxEdges={snapToBoxEdges}
@@ -573,15 +873,17 @@ export default function ResultsPage() {
                     magneticSnapEnabled={magneticSnapEnabled && !unlockedMode}
                     magneticSnapStrength={magneticSnapStrength}
                     lockedRows={lockedRows}
-                    onBoxClick={editMode ? handleBoxClick : undefined}
+                    onBoxClick={handleViewerBoxClick}
                     onBoxDragEnd={editMode ? handleBoxDragEnd : undefined}
                     onManualAdjustMessage={setSaveMsg}
                   />
                 </div>
                 <SkuLegend
-                  boxes={pallet.boxes}
+                  boxes={legendBoxes}
                   colorBySku={colorBySku}
+                  scope={legendScope}
                   selectedSku={legendSku}
+                  onScopeChange={setLegendScope}
                   onSkuClick={(sku) => setLegendSku((prev) => prev === sku ? undefined : sku)}
                   onSkuHover={setLegendHoverSku}
                 />
@@ -596,16 +898,20 @@ export default function ResultsPage() {
           )}
         </div>
 
-        {/* Edit panel */}
-        {editMode && (
+        {/* Inspector / edit panel */}
+        {(editMode || showInspectorPanel) && (
           <EditPanel
+            mode={editMode && inspectorMode === "edit" ? "edit" : "readonly"}
+            title={editMode && inspectorMode === "edit" ? "Selected" : activeIssue ? "Stability Issue Details" : "Box Details"}
             selectedBoxIds={selectedBoxIdsArr}
             selectedPalletIdx={selectedPallet}
-            pallets={editedPallets}
+            pallets={activePallets}
             palletSpec={PALLET_SPEC}
             settings={settings}
+            unlockedMode={unlockedMode}
             onSettingsChange={setSettings}
             validation={validation}
+            issueMessages={selectedIssueMessages}
             isSaving={isSaving}
             lockedRows={lockedRows}
             onLockRow={handleLockRow}
@@ -614,11 +920,21 @@ export default function ResultsPage() {
             onClearCompactWarnings={() => setCompactWarnings([])}
             onMove={handleMove}
             onRotate={handleRotate}
+            onLayFlat={handleLayFlat}
+            onPutOnLayer={handlePutOnLayer}
             onStandUpright={handleStandUpright}
             onDelete={handleDelete}
             onMoveToPallet={handleMoveToPallet}
             onSave={handleSave}
-            onClose={exitEditMode}
+            onClose={() => {
+              if (editMode) exitEditMode();
+              else {
+                setShowInspectorPanel(false);
+                setSelectedBoxIds(new Set());
+                setSelectedBoxId(null);
+                setActiveIssue(null);
+              }
+            }}
           />
         )}
       </div>

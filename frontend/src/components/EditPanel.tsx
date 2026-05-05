@@ -1,10 +1,12 @@
 "use client";
-import type { BoxResult, PalletResult, LayoutValidationResult, ManualAdjustmentSettings } from "@/lib/types";
+import type { BoxResult, PalletResult, LayoutValidationResult, ManualAdjustmentSettings, RotationAxis } from "@/lib/types";
 import type { LockedRow } from "@/lib/rowLocking";
 import { isBoxInLockedRow, getLockedRowForBox } from "@/lib/rowLocking";
 import clsx from "clsx";
 
 interface Props {
+  mode?: "readonly" | "edit";
+  title?: string;
   selectedBoxIds: string[];
   selectedPalletIdx: number;
   pallets: PalletResult[];
@@ -12,7 +14,9 @@ interface Props {
   settings: ManualAdjustmentSettings;
   onSettingsChange: (settings: ManualAdjustmentSettings) => void;
   validation: LayoutValidationResult | null;
+  issueMessages?: string[];
   isSaving: boolean;
+  unlockedMode?: boolean;
   // Row locking
   lockedRows: LockedRow[];
   onLockRow: () => void;
@@ -22,7 +26,9 @@ interface Props {
   onClearCompactWarnings: () => void;
   // Existing callbacks
   onMove: (boxIds: string[], palletIdx: number, dx: number, dy: number, dz: number) => void;
-  onRotate: (boxIds: string[], palletIdx: number) => void;
+  onRotate: (boxIds: string[], palletIdx: number, axis: RotationAxis) => void;
+  onLayFlat: (boxIds: string[], palletIdx: number) => void;
+  onPutOnLayer: (boxIds: string[], palletIdx: number) => void;
   onStandUpright: (boxId: string, palletIdx: number) => void;
   onDelete: (boxIds: string[], palletIdx: number) => void;
   onMoveToPallet: (boxIds: string[], fromIdx: number, toIdx: number) => void;
@@ -72,17 +78,19 @@ function ActionBtn({ onClick, children, variant = "default", disabled }: {
 }
 
 export default function EditPanel({
+  mode = "edit", title,
   selectedBoxIds, selectedPalletIdx, pallets, palletSpec, settings,
   onSettingsChange,
-  validation, isSaving,
+  validation, issueMessages = [], isSaving, unlockedMode = false,
   lockedRows, onLockRow, onUnlockRow,
   compactWarnings, onClearCompactWarnings,
-  onMove, onRotate, onStandUpright, onDelete, onMoveToPallet, onSave, onClose,
+  onMove, onRotate, onLayFlat, onPutOnLayer, onStandUpright, onDelete, onMoveToPallet, onSave, onClose,
 }: Props) {
   const currentPallet = pallets[selectedPalletIdx];
   const selectedBoxes = currentPallet?.boxes.filter((b) => selectedBoxIds.includes(b.box_id)) ?? [];
   const firstBox: BoxResult | null = selectedBoxes[0] ?? null;
   const isGroup = selectedBoxes.length > 1;
+  const isReadOnly = mode === "readonly";
 
   const invalidSet = new Set(validation?.invalidBoxIds ?? []);
   const hasErrors = validation && validation.errors.length > 0;
@@ -96,13 +104,14 @@ export default function EditPanel({
   const firstBoxLocked = firstBox ? isBoxInLockedRow(firstBox.box_id, lockedRows) : false;
   const firstBoxLockedRow = firstBox ? getLockedRowForBox(firstBox.box_id, lockedRows) : null;
   const anySelectedLocked = selectedBoxes.some((b) => isBoxInLockedRow(b.box_id, lockedRows));
+  const anyStandUprightOnly = selectedBoxes.some((b) => b.stand_upright_only);
 
   return (
     <div className="w-68 bg-white border-l border-gray-200 flex flex-col h-full overflow-hidden shadow-xl z-20" style={{ minWidth: 260 }}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-200">
         <div>
-          <span className="font-semibold text-sm text-gray-800">Selected</span>
+          <span className="font-semibold text-sm text-gray-800">{title ?? (isReadOnly ? "Box Details" : "Selected")}</span>
           {selectedBoxes.length > 0 && (
             <span className="ml-2 text-xs text-gray-500">
               {isGroup ? `${selectedBoxes.length} boxes` : firstBox?.box_id}
@@ -114,7 +123,7 @@ export default function EditPanel({
 
       <div className="flex-1 overflow-y-auto">
         {/* Compact warnings */}
-        {compactWarnings.length > 0 && (
+        {!isReadOnly && compactWarnings.length > 0 && (
           <div className="mx-4 mt-3 p-2 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700 space-y-0.5">
             <div className="flex items-center justify-between">
               <span className="font-semibold">Compact warnings</span>
@@ -149,6 +158,7 @@ export default function EditPanel({
           </div>
         )}
 
+        {!isReadOnly && (
         <div className="px-4 pt-3">
           <div className="text-xs font-medium text-gray-600 mb-2">Drag sensitivity</div>
           <div className="grid grid-cols-3 gap-1">
@@ -161,12 +171,14 @@ export default function EditPanel({
                 key={option.value}
                 onClick={() => setSensitivity(option.value)}
                 variant={settings.drag_sensitivity === option.value ? "primary" : "default"}
+                disabled={isReadOnly}
               >
                 {option.label}
               </ActionBtn>
             ))}
           </div>
         </div>
+        )}
 
         {selectedBoxes.length === 0 ? (
           <div className="px-4 py-6 text-center text-xs text-gray-400">
@@ -209,6 +221,14 @@ export default function EditPanel({
                     {invalidSet.has(firstBox.box_id) && <Badge label="INVALID" color="red" />}
                     {firstBoxLocked && <Badge label="ROW LOCKED" color="purple" />}
                   </div>
+                  {issueMessages.length > 0 && (
+                    <div className="mt-2 rounded border border-orange-200 bg-orange-50 p-2 text-xs text-orange-800 space-y-1">
+                      <div className="font-semibold">Stability issue{issueMessages.length === 1 ? "" : "s"}</div>
+                      {issueMessages.map((message, index) => (
+                        <p key={index}>{message}</p>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -217,12 +237,12 @@ export default function EditPanel({
             <div>
               <div className="text-xs font-medium text-gray-600 mb-2">Move ({step}mm steps)</div>
               <div className="grid grid-cols-3 gap-1">
-                <ActionBtn onClick={() => onMove(selectedBoxIds, selectedPalletIdx, -step, 0, 0)}>← X</ActionBtn>
-                <ActionBtn onClick={() => onMove(selectedBoxIds, selectedPalletIdx, 0, -step, 0)}>← Y</ActionBtn>
-                <ActionBtn onClick={() => onMove(selectedBoxIds, selectedPalletIdx, 0, 0, step)}>↑ Z</ActionBtn>
-                <ActionBtn onClick={() => onMove(selectedBoxIds, selectedPalletIdx, step, 0, 0)}>X →</ActionBtn>
-                <ActionBtn onClick={() => onMove(selectedBoxIds, selectedPalletIdx, 0, step, 0)}>Y →</ActionBtn>
-                <ActionBtn onClick={() => onMove(selectedBoxIds, selectedPalletIdx, 0, 0, -step)}>↓ Z</ActionBtn>
+                <ActionBtn disabled={isReadOnly} onClick={() => onMove(selectedBoxIds, selectedPalletIdx, -step, 0, 0)}>← X</ActionBtn>
+                <ActionBtn disabled={isReadOnly} onClick={() => onMove(selectedBoxIds, selectedPalletIdx, 0, -step, 0)}>← Y</ActionBtn>
+                <ActionBtn disabled={isReadOnly} onClick={() => onMove(selectedBoxIds, selectedPalletIdx, 0, 0, step)}>↑ Z</ActionBtn>
+                <ActionBtn disabled={isReadOnly} onClick={() => onMove(selectedBoxIds, selectedPalletIdx, step, 0, 0)}>X →</ActionBtn>
+                <ActionBtn disabled={isReadOnly} onClick={() => onMove(selectedBoxIds, selectedPalletIdx, 0, step, 0)}>Y →</ActionBtn>
+                <ActionBtn disabled={isReadOnly} onClick={() => onMove(selectedBoxIds, selectedPalletIdx, 0, 0, -step)}>↓ Z</ActionBtn>
               </div>
             </div>
 
@@ -231,12 +251,13 @@ export default function EditPanel({
               <div className="text-xs font-medium text-gray-600 mb-2">Row Lock</div>
               <div className="grid grid-cols-2 gap-1">
                 {!firstBoxLocked ? (
-                  <ActionBtn variant="purple" onClick={onLockRow}>
+                  <ActionBtn variant="purple" disabled={isReadOnly} onClick={onLockRow}>
                     🔒 Lock Row
                   </ActionBtn>
                 ) : (
                   <ActionBtn
                     variant="default"
+                    disabled={isReadOnly}
                     onClick={() => firstBoxLockedRow && onUnlockRow(firstBoxLockedRow.id)}
                   >
                     🔓 Unlock Row
@@ -255,16 +276,57 @@ export default function EditPanel({
               )}
             </div>
 
+            {/* Rotation controls */}
+            <div>
+              <div className="text-xs font-medium text-gray-600 mb-2">Rotation</div>
+              {unlockedMode && (
+                <div className="mb-2 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] text-blue-700">
+                  Unlocked Mode: rotations and lay-flat can temporarily overlap or go outside the pallet. Save requires a valid layout.
+                </div>
+              )}
+              {anyStandUprightOnly && (
+                <div className="mb-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
+                  This SKU is stand-upright-only. X/Y rotation is not allowed.
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-1">
+                <ActionBtn
+                  onClick={() => onRotate(selectedBoxIds, selectedPalletIdx, "x")}
+                  disabled={isReadOnly || anyStandUprightOnly}
+                >
+                  Rotate X 90°
+                </ActionBtn>
+                <ActionBtn
+                  onClick={() => onRotate(selectedBoxIds, selectedPalletIdx, "y")}
+                  disabled={isReadOnly || anyStandUprightOnly}
+                >
+                  Rotate Y 90°
+                </ActionBtn>
+                <ActionBtn
+                  onClick={() => onRotate(selectedBoxIds, selectedPalletIdx, "z")}
+                  disabled={isReadOnly}
+                >
+                  Rotate Z 90°
+                </ActionBtn>
+                <ActionBtn disabled={isReadOnly} onClick={() => onLayFlat(selectedBoxIds, selectedPalletIdx)}>
+                  Lay Flat / Largest Base
+                </ActionBtn>
+              </div>
+              <div className="mt-1 text-[10px] text-gray-400">
+                X swaps width/height. Y swaps length/height. Z swaps length/width on the pallet plane.
+              </div>
+            </div>
+
             {/* Actions */}
             <div className="grid grid-cols-2 gap-1">
               <ActionBtn
-                onClick={() => onRotate(selectedBoxIds, selectedPalletIdx)}
-                disabled={firstBox?.stand_upright_only && selectedBoxes.length === 1 && isGroup === false}
+                onClick={() => onPutOnLayer(selectedBoxIds, selectedPalletIdx)}
+                disabled={isReadOnly}
               >
-                Rotate 90°
+                Put on Layer
               </ActionBtn>
               {!isGroup && firstBox && (
-                <ActionBtn onClick={() => onStandUpright(firstBox.box_id, selectedPalletIdx)}>
+                <ActionBtn disabled={isReadOnly} onClick={() => onStandUpright(firstBox.box_id, selectedPalletIdx)}>
                   Stand Upright
                 </ActionBtn>
               )}
@@ -272,12 +334,13 @@ export default function EditPanel({
                 if (idx === selectedPalletIdx) return null;
                 return (
                   <ActionBtn key={idx}
+                    disabled={isReadOnly}
                     onClick={() => onMoveToPallet(selectedBoxIds, selectedPalletIdx, idx)}>
                     → Pallet {p.pallet_no}
                   </ActionBtn>
                 );
               })}
-              <ActionBtn variant="danger" onClick={() => onDelete(selectedBoxIds, selectedPalletIdx)}>
+              <ActionBtn variant="danger" disabled={isReadOnly} onClick={() => onDelete(selectedBoxIds, selectedPalletIdx)}>
                 {isGroup ? `Delete ${selectedBoxes.length}` : "Delete Box"}
               </ActionBtn>
             </div>
@@ -286,6 +349,7 @@ export default function EditPanel({
       </div>
 
       {/* Save */}
+      {!isReadOnly && (
       <div className="border-t border-gray-200 p-3">
         <button
           onClick={onSave} disabled={isSaving}
@@ -294,6 +358,7 @@ export default function EditPanel({
           {isSaving ? "Saving…" : "Save Adjusted Layout"}
         </button>
       </div>
+      )}
     </div>
   );
 }

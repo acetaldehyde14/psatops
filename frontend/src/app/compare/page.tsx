@@ -5,15 +5,16 @@ import type { AlgorithmType, CompareResponse, PalletSpec, Constraints, ItemReque
 import AlgorithmComparisonTable from "@/components/AlgorithmComparisonTable";
 import ConstraintForm from "@/components/ConstraintForm";
 import { defaultPalletiseRequest } from "@/lib/mockData";
+import { DEFAULT_CONSTRAINTS, DEFAULT_PALLET } from "@/lib/defaults";
 import Link from "next/link";
 
 const ALL_ALGOS: AlgorithmType[] = ["FIRST_FIT", "BEST_FIT", "EXTREME_POINT", "GENETIC"];
 
 export default function ComparePage() {
-  const [pallet, setPallet] = useState<PalletSpec>(defaultPalletiseRequest.pallet);
-  const [constraints, setConstraints] = useState<Constraints>(defaultPalletiseRequest.constraints);
+  const [pallet, setPallet] = useState<PalletSpec>(DEFAULT_PALLET);
+  const [constraints, setConstraints] = useState<Constraints>(DEFAULT_CONSTRAINTS);
   const [algorithm, setAlgorithm] = useState<AlgorithmType>("EXTREME_POINT");
-  const [itemsText, setItemsText] = useState(JSON.stringify(defaultPalletiseRequest.items, null, 2));
+  const [itemsText, setItemsText] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CompareResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -22,9 +23,15 @@ export default function ComparePage() {
     setLoading(true);
     setError(null);
     try {
+      if (!itemsText.trim()) {
+        throw new Error("No order data loaded");
+      }
       const items: ItemRequest[] = JSON.parse(itemsText);
+      if (!Array.isArray(items) || items.length === 0) {
+        throw new Error("No order data loaded");
+      }
       const data = await compare({
-        order_id: "CMP-001",
+        order_id: "",
         algorithms: ALL_ALGOS,
         pallet,
         constraints,
@@ -38,10 +45,29 @@ export default function ComparePage() {
     }
   };
 
+  const handleLoadDemoData = () => {
+    setPallet(defaultPalletiseRequest.pallet);
+    setConstraints(defaultPalletiseRequest.constraints);
+    setItemsText(JSON.stringify(defaultPalletiseRequest.items, null, 2));
+  };
+
   return (
     <div className="p-8 max-w-6xl mx-auto">
       <h1 className="text-2xl font-bold text-gray-900 mb-1">Algorithm Comparison</h1>
       <p className="text-gray-500 text-sm mb-6">Run all algorithms against the same order and compare results.</p>
+
+      {!itemsText.trim() && (
+        <div className="mb-5 flex items-center justify-between gap-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
+          <span>No order data loaded. Paste item JSON below before comparing.</span>
+          <button
+            type="button"
+            onClick={handleLoadDemoData}
+            className="shrink-0 bg-white hover:bg-yellow-100 border border-yellow-300 text-yellow-800 font-medium px-3 py-1.5 rounded text-xs"
+          >
+            Load Demo Data
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
         <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">

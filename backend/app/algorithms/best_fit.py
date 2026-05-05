@@ -1,7 +1,10 @@
 """Best Fit placement - place box where residual space is minimised."""
+import os
 from typing import List, Optional, Tuple
 from app.core.models import Box, Pallet
 from app.algorithms.first_fit import _can_place, _find_z
+from app.algorithms.rotations import get_allowed_rotations
+from app.algorithms.placement import rotation_score
 
 
 def _residual_volume(pallet: Pallet) -> float:
@@ -9,11 +12,18 @@ def _residual_volume(pallet: Pallet) -> float:
     return cap - pallet.used_volume
 
 
-def _find_best_position(pallet: Pallet, box: Box, allow_rotation: bool):
+def _find_best_position(pallet: Pallet, box: Box, allow_rotation, prefer_larger_base=False):
     best_pos = None
-    best_z = float("inf")
+    best_score = float("inf")
+    constraints = allow_rotation
 
-    for rot in box.rotations(allow_rotation):
+    rotations = get_allowed_rotations(box, allow_rotation, prefer_larger_base)
+    if os.getenv("DEBUG"):
+        print(
+            f"prefer_larger_base={prefer_larger_base}, "
+            f"box={box.sku}, rotations={rotations}"
+        )
+    for rot in rotations:
         orig = (box.length, box.width, box.height, box.rotation)
         box.length, box.width, box.height, box.rotation = rot
 
@@ -24,9 +34,10 @@ def _find_best_position(pallet: Pallet, box: Box, allow_rotation: bool):
             y = 0.0
             while y + box.width <= pallet.width + 0.01:
                 z = _find_z(pallet, box, x, y)
-                if _can_place(pallet, box, x, y, z):
-                    if z < best_z:
-                        best_z = z
+                if _can_place(pallet, box, x, y, z, constraints):
+                    score = z + rotation_score(box, constraints)
+                    if score < best_score:
+                        best_score = score
                         best_pos = (x, y, z, box.length, box.width, box.height, box.rotation)
                 y += step_y
             x += step_x
@@ -39,7 +50,8 @@ def _find_best_position(pallet: Pallet, box: Box, allow_rotation: bool):
 def run_best_fit(
     boxes: List[Box],
     pallet_spec,
-    allow_rotation: bool = True,
+    allow_rotation=True,
+    prefer_larger_base=False,
 ) -> List[Pallet]:
     sorted_boxes = sorted(boxes, key=lambda b: b.volume, reverse=True)
     pallets: List[Pallet] = []
@@ -65,7 +77,7 @@ def run_best_fit(
         best_residual = float("inf")
 
         for pallet in pallets:
-            pos = _find_best_position(pallet, box, allow_rotation)
+            pos = _find_best_position(pallet, box, allow_rotation, prefer_larger_base)
             if pos is not None:
                 residual = _residual_volume(pallet) - box.volume
                 if residual < best_residual:
@@ -75,7 +87,7 @@ def run_best_fit(
 
         if best_pallet is None:
             best_pallet = new_pallet()
-            best_pos = _find_best_position(best_pallet, box, allow_rotation)
+            best_pos = _find_best_position(best_pallet, box, allow_rotation, prefer_larger_base)
 
         if best_pos is not None:
             box.x, box.y, box.z = best_pos[0], best_pos[1], best_pos[2]
@@ -85,9 +97,7 @@ def run_best_fit(
             best_pallet.boxes.append(box)
         else:
             p = new_pallet()
-            box.x, box.y, box.z = 0.0, 0.0, 0.0
-            box.placed = True
-            p.boxes.append(box)
+            box.placed = False
 
     for pallet in pallets:
         for i, b in enumerate(sorted(pallet.boxes, key=lambda x: (x.layer, x.z, x.x, x.y)), start=1):

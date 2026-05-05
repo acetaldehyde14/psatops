@@ -3,13 +3,76 @@ Comprehensive validation for manually adjusted pallet layouts.
 
 All geometry uses mm.  Boxes are axis-aligned rectangular prisms.
 """
+import re
 from typing import List, Dict, Optional
 from app.core.schemas import (
     LayoutPatchRequest, AdjustmentValidation, BoxResult,
-    ManualAdjustmentSettings,
+    ManualAdjustmentSettings, StabilityIssue,
 )
 
 SUPPORT_THRESHOLD = 0.70   # 70 % of base area must be supported
+
+
+def _issue_type(message: str) -> str:
+    msg = message.lower()
+    if "floating" in msg or "support" in msg:
+        return "floating" if "no support" in msg or "floating" in msg else "unstable"
+    if "overlap" in msg:
+        return "overlap"
+    if "threshold" in msg or "edge" in msg or "outside" in msg:
+        return "boundary"
+    if "height" in msg:
+        return "height"
+    if "no_load_on_top" in msg:
+        return "no_load_on_top"
+    if "stand_upright_only" in msg:
+        return "stand_upright_only"
+    if "duplicate" in msg:
+        return "duplicate"
+    if "missing" in msg:
+        return "missing"
+    return "validation"
+
+
+def _box_ids_from_message(message: str) -> List[str]:
+    ids = re.findall(r"[Bb]ox(?:es)? '?([A-Za-z0-9_-]+)'?", message)
+    ids.extend(re.findall(r"and '([A-Za-z0-9_-]+)'", message))
+    ids.extend(re.findall(r"of '([A-Za-z0-9_-]+)'", message))
+    ids.extend(re.findall(r"Duplicate box_id '([A-Za-z0-9_-]+)'", message))
+    return list(dict.fromkeys(ids))
+
+
+def _issues_from_messages(
+    errors: List[str],
+    warnings: List[str],
+    box_meta: Dict[str, tuple[int, Optional[str]]],
+) -> List[StabilityIssue]:
+    issues: List[StabilityIssue] = []
+    for severity, messages in (("error", errors), ("warning", warnings)):
+        for message in messages:
+            ids = _box_ids_from_message(message)
+            if not ids:
+                issues.append(
+                    StabilityIssue(
+                        type=_issue_type(message),
+                        severity=severity,
+                        message=message,
+                    )
+                )
+                continue
+            for bid in ids:
+                pallet_no, sku = box_meta.get(bid, (None, None))
+                issues.append(
+                    StabilityIssue(
+                        type=_issue_type(message),
+                        severity=severity,
+                        box_id=bid,
+                        pallet_no=pallet_no,
+                        sku=sku,
+                        message=message,
+                    )
+                )
+    return issues
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -104,6 +167,7 @@ def check_floating(
     pallet_no: int,
     errors: List[str],
     warnings: List[str],
+    strict_stability: bool,
 ) -> None:
     """Box at z=0 is on the floor.  z>0 requires ≥70% XY support from boxes directly below."""
     for box in boxes:
@@ -126,15 +190,17 @@ def check_floating(
 
         frac = min(supported / base_area, 1.0)
         if frac == 0.0:
-            errors.append(
+            message = (
                 f"Pallet {pallet_no}: box '{box['box_id']}' is floating "
                 f"(z={box['z_mm']:.1f}, no support below)."
             )
+            (errors if strict_stability else warnings).append(message)
         elif frac < SUPPORT_THRESHOLD:
-            warnings.append(
+            message = (
                 f"Pallet {pallet_no}: box '{box['box_id']}' has only "
                 f"{frac*100:.0f}% support (minimum {SUPPORT_THRESHOLD*100:.0f}%)."
             )
+            (errors if strict_stability else warnings).append(message)
 
 
 def check_no_load_on_top(
@@ -142,6 +208,8 @@ def check_no_load_on_top(
     orig_map: Dict[str, BoxResult],
     pallet_no: int,
     errors: List[str],
+    warnings: List[str],
+    strict_stability: bool,
 ) -> None:
     """If box has no_load_on_top, nothing may rest on its top face."""
     for box in boxes:
@@ -159,10 +227,11 @@ def check_no_load_on_top(
                     other["x_mm"], other["y_mm"], other["length_mm"], other["width_mm"],
                 )
                 if overlap > 1.0:
-                    errors.append(
+                    message = (
                         f"Pallet {pallet_no}: box '{other['box_id']}' is on top of "
                         f"'{box['box_id']}' which has no_load_on_top constraint."
                     )
+                    (errors if strict_stability else warnings).append(message)
 
 
 def check_stand_upright_only(
@@ -236,17 +305,34 @@ def validate_adjusted_layout(
 
     all_boxes: List[dict] = []
     submitted_ids: set = set()
+    box_meta: Dict[str, tuple[int, Optional[str]]] = {}
 
     for pallet in layout.pallets:
         boxes = [b.model_dump() for b in pallet.boxes]
         all_boxes.extend(boxes)
+        for b in boxes:
+            orig = orig_box_map.get(b["box_id"])
+            box_meta[b["box_id"]] = (pallet.pallet_no, orig.sku if orig else None)
 
         check_boundary_with_threshold(boxes, pallet_config, layout.settings, errors)
         check_max_height(boxes, pallet_config, errors)
         check_max_weight(boxes, pallet.pallet_no, pallet_config, errors)
         check_overlap(boxes, pallet.pallet_no, errors)
-        check_floating(boxes, pallet.pallet_no, errors, warnings)
-        check_no_load_on_top(boxes, orig_box_map, pallet.pallet_no, errors)
+        check_floating(
+            boxes,
+            pallet.pallet_no,
+            errors,
+            warnings,
+            layout.settings.do_not_allow_stability_issues,
+        )
+        check_no_load_on_top(
+            boxes,
+            orig_box_map,
+            pallet.pallet_no,
+            errors,
+            warnings,
+            layout.settings.do_not_allow_stability_issues,
+        )
         check_stand_upright_only(boxes, orig_box_map, pallet.pallet_no, errors)
 
         for b in boxes:
@@ -254,9 +340,17 @@ def validate_adjusted_layout(
 
     check_duplicate_box_ids(all_boxes, errors)
     check_missing_and_extra_boxes(submitted_ids, original_box_ids, warnings, errors)
+    issues = _issues_from_messages(errors, warnings, box_meta)
+    invalid_box_ids = sorted({
+        issue.box_id
+        for issue in issues
+        if issue.box_id and issue.severity == "error"
+    })
 
     return AdjustmentValidation(
         is_valid=len(errors) == 0,
+        invalidBoxIds=invalid_box_ids,
+        issues=issues,
         errors=errors,
         warnings=warnings,
     )

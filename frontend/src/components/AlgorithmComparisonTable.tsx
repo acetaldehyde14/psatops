@@ -35,7 +35,11 @@ export default function AlgorithmComparisonTable({ results }: Props) {
               <td className="px-4 py-3">{r.total_weight_kg.toFixed(2)}</td>
               <td className="px-4 py-3">{r.floating_boxes}</td>
               <td className="px-4 py-3">{r.unstable_boxes}</td>
-              <td className="px-4 py-3 text-xs text-gray-500">{r.warnings.length > 0 ? r.warnings[0] : "—"}</td>
+              <td className="px-4 py-3 text-xs text-gray-500">
+                {r.warnings.length > 0
+                  ? (typeof r.warnings[0] === "string" ? r.warnings[0] : r.warnings[0].message)
+                  : "—"}
+              </td>
             </tr>
           ))}
         </tbody>

@@ -2,7 +2,7 @@
  * Client-side layout validation — mirrors backend checks for instant feedback.
  * All dimensions in mm.
  */
-import type { BoxResult, PalletResult, ManualAdjustmentSettings, LayoutValidationResult } from "./types";
+import type { BoxResult, PalletResult, ManualAdjustmentSettings, LayoutValidationResult, StabilityIssue } from "./types";
 
 const SUPPORT_THRESHOLD = 0.70;
 const EPS = 0.5;
@@ -32,6 +32,7 @@ export function validateBoxesLightweight(
   options: { overlapToleranceMm?: number } = {},
 ): LayoutValidationResult {
   const errors: string[] = [];
+  const issues: StabilityIssue[] = [];
   const invalidBoxIds: string[] = [];
   const tl = settings.edge_threshold_length_mm;
   const tw = settings.edge_threshold_width_mm;
@@ -39,15 +40,21 @@ export function validateBoxesLightweight(
   for (const box of movingBoxes) {
     let invalid = false;
     if (box.x_mm < tl - EPS || box.x_mm + box.length_mm > palletSpec.length_mm - tl + EPS) {
-      errors.push(`Box '${box.box_id}' is outside the usable pallet length.`);
+      const message = `Box '${box.box_id}' is outside the usable pallet length.`;
+      errors.push(message);
+      issues.push({ type: "boundary", severity: "error", box_id: box.box_id, message });
       invalid = true;
     }
     if (box.y_mm < tw - EPS || box.y_mm + box.width_mm > palletSpec.width_mm - tw + EPS) {
-      errors.push(`Box '${box.box_id}' is outside the usable pallet width.`);
+      const message = `Box '${box.box_id}' is outside the usable pallet width.`;
+      errors.push(message);
+      issues.push({ type: "boundary", severity: "error", box_id: box.box_id, message });
       invalid = true;
     }
     if (box.z_mm < -EPS || box.z_mm + box.height_mm > palletSpec.max_height_mm + EPS) {
-      errors.push(`Box '${box.box_id}' is outside the pallet height.`);
+      const message = `Box '${box.box_id}' is outside the pallet height.`;
+      errors.push(message);
+      issues.push({ type: "height", severity: "error", box_id: box.box_id, message });
       invalid = true;
     }
 
@@ -61,7 +68,10 @@ export function validateBoxesLightweight(
 
     for (const other of nearby) {
       if (boxesOverlap(box, other, options.overlapToleranceMm ?? EPS)) {
-        errors.push(`Box '${box.box_id}' overlaps '${other.box_id}'.`);
+        const message = `Box '${box.box_id}' overlaps '${other.box_id}'.`;
+        errors.push(message);
+        issues.push({ type: "overlap", severity: "error", box_id: box.box_id, message });
+        issues.push({ type: "overlap", severity: "error", box_id: other.box_id, message });
         invalid = true;
         if (!invalidBoxIds.includes(other.box_id)) invalidBoxIds.push(other.box_id);
       }
@@ -73,6 +83,7 @@ export function validateBoxesLightweight(
   return {
     isValid: errors.length === 0,
     invalidBoxIds,
+    issues,
     errors,
     warnings: [],
   };
@@ -98,10 +109,27 @@ export function validateLayout(
   pallets: PalletResult[],
   palletSpec: { length_mm: number; width_mm: number; max_height_mm: number; max_weight_kg: number },
   settings: ManualAdjustmentSettings,
+  options: {
+    mode?: "strict" | "soft";
+    allowOutOfBounds?: boolean;
+    allowOverlap?: boolean;
+    allowFloating?: boolean;
+  } = {},
 ): LayoutValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
+  const issues: StabilityIssue[] = [];
   const invalidBoxIds: string[] = [];
+  const softMode = options.mode === "soft";
+  const addProblem = (message: string, boxId: string | undefined, issue: StabilityIssue, block: boolean) => {
+    issues.push(issue);
+    if (block && !softMode) {
+      errors.push(message);
+    } else {
+      warnings.push(message);
+    }
+    if (boxId && !invalidBoxIds.includes(boxId)) invalidBoxIds.push(boxId);
+  };
 
   const tl = settings.edge_threshold_length_mm;
   const tw = settings.edge_threshold_width_mm;
@@ -116,23 +144,28 @@ export function validateLayout(
 
       // Boundary + threshold
       if (b.x_mm < tl - EPS) {
-        errors.push(`Box '${id}': x=${b.x_mm} violates length threshold (${tl}mm).`);
+        const message = `Box '${id}': x=${b.x_mm} violates length threshold (${tl}mm).`;
+        addProblem(message, id, { type: "boundary", severity: softMode ? "warning" : "error", box_id: id, pallet_no: pallet.pallet_no, sku: b.sku, message }, !options.allowOutOfBounds);
         boxInvalid = true;
       }
       if (b.y_mm < tw - EPS) {
-        errors.push(`Box '${id}': y=${b.y_mm} violates width threshold (${tw}mm).`);
+        const message = `Box '${id}': y=${b.y_mm} violates width threshold (${tw}mm).`;
+        addProblem(message, id, { type: "boundary", severity: softMode ? "warning" : "error", box_id: id, pallet_no: pallet.pallet_no, sku: b.sku, message }, !options.allowOutOfBounds);
         boxInvalid = true;
       }
       if (b.x_mm + b.length_mm > palletSpec.length_mm - tl + EPS) {
-        errors.push(`Box '${id}': right edge exceeds pallet (threshold ${tl}mm).`);
+        const message = `Box '${id}': right edge exceeds pallet (threshold ${tl}mm).`;
+        addProblem(message, id, { type: "boundary", severity: softMode ? "warning" : "error", box_id: id, pallet_no: pallet.pallet_no, sku: b.sku, message }, !options.allowOutOfBounds);
         boxInvalid = true;
       }
       if (b.y_mm + b.width_mm > palletSpec.width_mm - tw + EPS) {
-        errors.push(`Box '${id}': front edge exceeds pallet (threshold ${tw}mm).`);
+        const message = `Box '${id}': front edge exceeds pallet (threshold ${tw}mm).`;
+        addProblem(message, id, { type: "boundary", severity: softMode ? "warning" : "error", box_id: id, pallet_no: pallet.pallet_no, sku: b.sku, message }, !options.allowOutOfBounds);
         boxInvalid = true;
       }
       if (b.z_mm + b.height_mm > palletSpec.max_height_mm + EPS) {
-        errors.push(`Box '${id}': exceeds max height.`);
+        const message = `Box '${id}': exceeds max height.`;
+        addProblem(message, id, { type: "height", severity: softMode ? "warning" : "error", box_id: id, pallet_no: pallet.pallet_no, sku: b.sku, message }, !options.allowOutOfBounds);
         boxInvalid = true;
       }
 
@@ -149,7 +182,9 @@ export function validateLayout(
     for (let i = 0; i < boxes.length; i++) {
       for (let j = i + 1; j < boxes.length; j++) {
         if (boxesOverlap(boxes[i], boxes[j])) {
-          errors.push(`Boxes '${boxes[i].box_id}' and '${boxes[j].box_id}' overlap.`);
+          const message = `Boxes '${boxes[i].box_id}' and '${boxes[j].box_id}' overlap.`;
+          addProblem(message, boxes[i].box_id, { type: "overlap", severity: softMode ? "warning" : "error", box_id: boxes[i].box_id, pallet_no: pallet.pallet_no, sku: boxes[i].sku, message }, !options.allowOverlap);
+          addProblem(message, boxes[j].box_id, { type: "overlap", severity: softMode ? "warning" : "error", box_id: boxes[j].box_id, pallet_no: pallet.pallet_no, sku: boxes[j].sku, message }, !options.allowOverlap);
           if (!invalidBoxIds.includes(boxes[i].box_id)) invalidBoxIds.push(boxes[i].box_id);
           if (!invalidBoxIds.includes(boxes[j].box_id)) invalidBoxIds.push(boxes[j].box_id);
         }
@@ -161,10 +196,23 @@ export function validateLayout(
       if (b.z_mm < EPS) continue;
       const frac = supportFraction(b, boxes);
       if (frac === 0) {
-        errors.push(`Box '${b.box_id}' is floating.`);
-        if (!invalidBoxIds.includes(b.box_id)) invalidBoxIds.push(b.box_id);
+        const message = `Box '${b.box_id}' is floating or has insufficient support`;
+        if (settings.do_not_allow_stability_issues && !options.allowFloating) {
+          addProblem(message, b.box_id, { type: "floating", severity: softMode ? "warning" : "error", box_id: b.box_id, pallet_no: pallet.pallet_no, sku: b.sku, message }, true);
+        } else {
+          warnings.push(message);
+          issues.push({ type: "floating", severity: "warning", box_id: b.box_id, pallet_no: pallet.pallet_no, sku: b.sku, message });
+          if (!invalidBoxIds.includes(b.box_id)) invalidBoxIds.push(b.box_id);
+        }
       } else if (frac < SUPPORT_THRESHOLD) {
-        warnings.push(`Box '${b.box_id}' has only ${(frac * 100).toFixed(0)}% support.`);
+        const message = `Box '${b.box_id}' has only ${(frac * 100).toFixed(0)}% support.`;
+        if (settings.do_not_allow_stability_issues && !options.allowFloating) {
+          addProblem(message, b.box_id, { type: "unstable", severity: softMode ? "warning" : "error", box_id: b.box_id, pallet_no: pallet.pallet_no, sku: b.sku, message }, true);
+        } else {
+          warnings.push(message);
+          issues.push({ type: "unstable", severity: "warning", box_id: b.box_id, pallet_no: pallet.pallet_no, sku: b.sku, message });
+          if (!invalidBoxIds.includes(b.box_id)) invalidBoxIds.push(b.box_id);
+        }
       }
     }
 
@@ -180,9 +228,18 @@ export function validateLayout(
             other.x_mm, other.y_mm, other.length_mm, other.width_mm,
           );
           if (overlap > 1) {
-            errors.push(`Box '${other.box_id}' is on top of '${b.box_id}' (no_load_on_top).`);
-            if (!invalidBoxIds.includes(other.box_id)) invalidBoxIds.push(other.box_id);
-            if (!invalidBoxIds.includes(b.box_id)) invalidBoxIds.push(b.box_id);
+            const message = `Box '${other.box_id}' is on top of '${b.box_id}' (no_load_on_top).`;
+            if (settings.do_not_allow_stability_issues) {
+              errors.push(message);
+              issues.push({ type: "no_load_on_top", severity: "error", box_id: other.box_id, pallet_no: pallet.pallet_no, sku: other.sku, message });
+              issues.push({ type: "no_load_on_top", severity: "error", box_id: b.box_id, pallet_no: pallet.pallet_no, sku: b.sku, message });
+              if (!invalidBoxIds.includes(other.box_id)) invalidBoxIds.push(other.box_id);
+              if (!invalidBoxIds.includes(b.box_id)) invalidBoxIds.push(b.box_id);
+            } else {
+              warnings.push(message);
+              issues.push({ type: "no_load_on_top", severity: "warning", box_id: other.box_id, pallet_no: pallet.pallet_no, sku: other.sku, message });
+              issues.push({ type: "no_load_on_top", severity: "warning", box_id: b.box_id, pallet_no: pallet.pallet_no, sku: b.sku, message });
+            }
           }
         }
       }
@@ -193,7 +250,9 @@ export function validateLayout(
       if (!b.stand_upright_only) continue;
       const origH = b.original_height_mm ?? b.height_mm;
       if (Math.abs(b.height_mm - origH) > EPS) {
-        errors.push(`Box '${b.box_id}' has stand_upright_only but height changed.`);
+        const message = `Box '${b.box_id}' has stand_upright_only but height changed.`;
+        errors.push(message);
+        issues.push({ type: "stand_upright_only", severity: "error", box_id: b.box_id, pallet_no: pallet.pallet_no, sku: b.sku, message });
         if (!invalidBoxIds.includes(b.box_id)) invalidBoxIds.push(b.box_id);
       }
     }
@@ -201,7 +260,9 @@ export function validateLayout(
 
   return {
     isValid: errors.length === 0,
+    mode: options.mode ?? "strict",
     invalidBoxIds: Array.from(new Set(invalidBoxIds)),
+    issues: issues.map((issue, index) => ({ ...issue, id: issue.id ?? `${issue.type}-${issue.box_id ?? "layout"}-${index}` })),
     errors,
     warnings,
   };

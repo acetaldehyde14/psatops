@@ -1,0 +1,5 @@
+frontend/.next/
+frontend/node_modules/
+.claude/
+CLAUDE.md
+claude_code_zai_env.sh

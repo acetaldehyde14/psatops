@@ -1,0 +1,8 @@
+com/psap/palletisation/algorithm/BestFitAlgorithmTest.class
+com/psap/palletisation/algorithm/ExtremePointAlgorithmTest.class
+com/psap/palletisation/service/LayoutValidationServiceTest.class
+com/psap/palletisation/controller/JobControllerTest.class
+com/psap/palletisation/controller/PalletiseControllerTest.class
+com/psap/palletisation/algorithm/GeneticAlgorithmTest.class
+com/psap/palletisation/algorithm/FirstFitAlgorithmTest.class
+com/psap/palletisation/service/ValidationServiceTest.class

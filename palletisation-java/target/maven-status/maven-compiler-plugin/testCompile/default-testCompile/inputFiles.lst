@@ -1,0 +1,8 @@
+/Users/maximuschow/psap/palletisation-java/src/test/java/com/psap/palletisation/algorithm/BestFitAlgorithmTest.java
+/Users/maximuschow/psap/palletisation-java/src/test/java/com/psap/palletisation/algorithm/ExtremePointAlgorithmTest.java
+/Users/maximuschow/psap/palletisation-java/src/test/java/com/psap/palletisation/algorithm/FirstFitAlgorithmTest.java
+/Users/maximuschow/psap/palletisation-java/src/test/java/com/psap/palletisation/algorithm/GeneticAlgorithmTest.java
+/Users/maximuschow/psap/palletisation-java/src/test/java/com/psap/palletisation/controller/JobControllerTest.java
+/Users/maximuschow/psap/palletisation-java/src/test/java/com/psap/palletisation/controller/PalletiseControllerTest.java
+/Users/maximuschow/psap/palletisation-java/src/test/java/com/psap/palletisation/service/LayoutValidationServiceTest.java
+/Users/maximuschow/psap/palletisation-java/src/test/java/com/psap/palletisation/service/ValidationServiceTest.java

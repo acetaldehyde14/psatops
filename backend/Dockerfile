@@ -1,6 +1,10 @@
-FROM python:3.12-slim
+FROM eclipse-temurin:21-jdk AS build
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+RUN ./mvnw package -DskipTests
+
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+COPY --from=build /app/target/palletisation-0.1.0-SNAPSHOT.jar app.jar
+EXPOSE 8000
+ENTRYPOINT ["java", "-jar", "app.jar"]

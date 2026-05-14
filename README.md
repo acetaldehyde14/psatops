@@ -1,18 +1,44 @@
 # Palletisation Optimiser
 
-A full-stack web application for 3D warehouse palletisation optimisation, supporting multiple algorithms, Excel/CSV upload, 3D visualisation, and exportable results.
+A full-stack web application for 3D warehouse palletisation optimisation, supporting multiple packing algorithms, Excel/CSV/JSON upload, interactive 3D visualisation, manual layout adjustment, and exportable results.
 
 ---
 
 ## Stack
 
-| Layer     | Technology                                 |
-|-----------|--------------------------------------------|
-| Frontend  | Next.js 14, React, TypeScript, TailwindCSS |
-| 3D        | React Three Fiber / Three.js               |
-| Backend   | Python FastAPI                             |
-| Storage   | In-memory (SQLite/Postgres-ready)          |
-| Parsing   | pandas + openpyxl                          |
+| Layer     | Technology                                   |
+|-----------|----------------------------------------------|
+| Frontend  | Next.js 14, React, TypeScript, TailwindCSS   |
+| 3D        | React Three Fiber / Three.js                 |
+| Backend   | Java 21, Spring Boot 3.3, Maven              |
+| Storage   | In-memory (no database required)             |
+| Parsing   | Apache POI (Excel), Apache Commons CSV       |
+
+---
+
+## Project Structure
+
+```
+.
+├── backend/          # Java Spring Boot backend (port 8000)
+├── frontend/         # Next.js frontend (port 3000)
+└── docker-compose.yml
+```
+
+### Backend package layout (`backend/src/main/java/com/psap/palletisation/`)
+
+```
+algorithm/       # FirstFit, BestFit, ExtremePoint, Genetic, OptimiserService
+algorithm/util/  # PlacementUtils, RotationUtils, ScoringUtils, StabilityUtils
+controller/      # PalletiseController, JobController, UploadController, HealthController
+dto/request/     # PalletiseRequest, ItemRequest, Constraints, PalletSpec, LayoutPatchRequest
+dto/response/    # PalletiseResponse, BoxResult, PalletResult, SummaryResult, ...
+enums/           # AlgorithmType, StackBy, FractionalQuantityMode
+model/           # Box, Pallet (internal domain models)
+service/         # JobStoreService, ValidationService, LayoutValidationService, ExportService, ParserService
+exception/       # GlobalExceptionHandler
+config/          # WebConfig (CORS)
+```
 
 ---
 
@@ -20,15 +46,22 @@ A full-stack web application for 3D warehouse palletisation optimisation, suppor
 
 ### Backend
 
+Requires Java 21. Maven wrapper is included — no global Maven install needed.
+
 ```bash
 cd backend
-python3 -m venv .venv
-source .venv/bin/activate         # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+./mvnw spring-boot:run
 ```
 
-API docs: http://localhost:8000/docs
+Or build and run the JAR directly:
+
+```bash
+cd backend
+./mvnw package -DskipTests
+java -jar target/palletisation-0.1.0-SNAPSHOT.jar
+```
+
+API available at: http://localhost:8000
 
 ### Frontend
 
@@ -67,6 +100,17 @@ docker-compose up --build
 
 ---
 
+## Running Tests
+
+```bash
+cd backend
+./mvnw test
+```
+
+28 unit and integration tests covering all four algorithms, validation service, layout validation, and controller endpoints.
+
+---
+
 ## Render Deployment
 
 Frontend Render environment variable:
@@ -99,6 +143,8 @@ C-WIDGET-SMALL,20,100,80,60,0.050,LOT003,2027-01-01,R02-L01-C01-D01,TPH,SG,Small
 
 Required columns: `sku`, `quantity`, `length_mm`, `width_mm`, `height_mm`, `weight_kg`
 
+Accepted file types: `.csv`, `.xlsx`, `.xls`, `.json`
+
 ---
 
 ## API Documentation
@@ -119,7 +165,7 @@ curl -X POST http://localhost:8000/api/v1/palletise \
     "algorithm": "EXTREME_POINT",
     "pallet": {
       "length_mm": 1200,
-      "width_mm": 1000,
+      "width_mm": 1100,
       "max_height_mm": 1150,
       "max_weight_kg": 1500
     },
@@ -156,8 +202,8 @@ curl -X POST http://localhost:8000/api/v1/palletise/compare \
   -d '{
     "order_id": "CMP-001",
     "algorithms": ["FIRST_FIT", "BEST_FIT", "EXTREME_POINT", "GENETIC"],
-    "pallet": {"length_mm": 1200, "width_mm": 1000, "max_height_mm": 1150, "max_weight_kg": 1500},
-    "constraints": {"allow_rotation": true, "stack_by": "weight", "mix_products": true, "respect_fefo": true, "respect_delivery_date": false, "prefer_partial_pallets": true, "prefer_location_cluster": true},
+    "pallet": {"length_mm": 1200, "width_mm": 1100, "max_height_mm": 1150, "max_weight_kg": 1500},
+    "constraints": {"allow_rotation": true, "stack_by": "weight", "mix_products": true, "respect_fefo": true},
     "items": [{"sku": "BOX-A", "quantity": 5, "length_mm": 300, "width_mm": 200, "height_mm": 150, "weight_kg": 1.5}]
   }'
 ```
@@ -166,13 +212,23 @@ curl -X POST http://localhost:8000/api/v1/palletise/compare \
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/upload \
-  -F "file=@backend/app/sample_data/sample_order.csv"
+  -F "file=@sample_order.csv"
 ```
 
 ### GET /api/v1/jobs/{job_id}
 
 ```bash
 curl http://localhost:8000/api/v1/jobs/job_abc123def456
+```
+
+### PATCH /api/v1/jobs/{job_id}/layout
+
+Submit a manually adjusted layout for validation and persistence.
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/jobs/job_abc123def456/layout \
+  -H "Content-Type: application/json" \
+  -d '{"pallets": [...], "settings": {}}'
 ```
 
 ### GET /api/v1/jobs/{job_id}/export/csv
@@ -185,46 +241,44 @@ curl -o result.csv http://localhost:8000/api/v1/jobs/job_abc123def456/export/csv
 
 ## Algorithms
 
-| Algorithm      | Description                                                  |
-|----------------|--------------------------------------------------------------|
-| FIRST_FIT      | First Fit Decreasing. Fast baseline.                         |
-| BEST_FIT       | Best Fit - minimises residual space per pallet.              |
-| EXTREME_POINT  | 3D Extreme Point packing. Best default algorithm.            |
-| GENETIC        | Genetic algorithm evolving box ordering over 5 generations.  |
-| AUTO           | Runs EXTREME_POINT + GENETIC, returns better result.         |
+| Algorithm      | Description                                                        |
+|----------------|--------------------------------------------------------------------|
+| `FIRST_FIT`    | First Fit Decreasing. Fast baseline, good for large orders.        |
+| `BEST_FIT`     | Best Fit — minimises residual space per pallet.                    |
+| `EXTREME_POINT`| 3D Extreme Point packing. Best default for most orders.            |
+| `GENETIC`      | Genetic algorithm evolving box ordering over 5 generations.        |
+| `AUTO`         | Runs `EXTREME_POINT` + `GENETIC`, returns the better result.       |
+
+Auto-selection thresholds (when `algorithm` is `AUTO`):
+- ≤ 10 items → Extreme Point only
+- 11–50 items → Extreme Point vs Genetic, pick lower score
+- > 50 items → First Fit
 
 ---
 
 ## Warehouse Business Rules (Constraints)
 
-| Field                      | Description                                           |
-|----------------------------|-------------------------------------------------------|
-| `respect_fefo`             | Sort by earliest expiry date first                    |
-| `respect_delivery_date`    | Group boxes by requested delivery date                |
-| `prefer_partial_pallets`   | Fill partial pallets before opening new ones          |
-| `prefer_location_cluster`  | Group by warehouse location Row→Level→Column→Dept     |
-| `allow_rotation`           | Try all 6 box rotations                               |
-| `mix_products`             | Allow different SKUs on the same pallet               |
-
----
-
-## Running Tests
-
-```bash
-cd backend
-source .venv/bin/activate
-pytest app/tests/ -v
-```
+| Field                       | Default | Description                                            |
+|-----------------------------|---------|--------------------------------------------------------|
+| `allow_rotation`            | `true`  | Try all 6 box orientations                             |
+| `fractional_quantity_mode`  | `ceil`  | How to handle fractional carton quantities             |
+| `do_not_allow_stability_issues` | `true` | Reject placements with floating/unstable boxes     |
+| `prefer_larger_base`        | `false` | Prioritise orientations with the largest base area     |
+| `enforce_no_load_on_top`    | `true`  | Respect `no_load_on_top` box flags                     |
+| `stack_by`                  | `weight`| Primary sort key: `weight`, `volume`, or `height`      |
+| `mix_products`              | `true`  | Allow different SKUs on the same pallet                |
+| `respect_fefo`              | `true`  | Sort by earliest expiry date first                     |
+| `respect_delivery_date`     | `false` | Group boxes by requested delivery date                 |
+| `prefer_partial_pallets`    | `true`  | Fill partial pallets before opening new ones           |
+| `prefer_location_cluster`   | `true`  | Group by warehouse location Row→Level→Column→Dept      |
 
 ---
 
 ## Known Limitations
 
-1. **Job persistence**: Jobs are stored in-memory. Restarting the server clears all jobs. Switch `job_store.py` to SQLite/Postgres for persistence.
-2. **Algorithm performance**: The grid-based placement search (FFD, Best Fit, EP) uses a simple sweep — can be slow for very large orders (500+ items). Extreme Point has O(n²) placement search per box.
-3. **Genetic algorithm**: Uses 5 generations × 10 population. Increase `GENERATIONS` and `POPULATION_SIZE` in `genetic.py` for better solutions at the cost of runtime.
-4. **Stability validation**: Support fraction check is approximate (axis-aligned overlap). Does not model centre-of-mass tipping.
-5. **PDF export**: Placeholder button only. Implement with `reportlab` or `weasyprint` on the backend.
-6. **3D viewer performance**: The Three.js viewer renders all boxes as individual meshes. For 1000+ boxes, consider instanced meshes.
-7. **Upload parsing**: Column name normalisation handles common variations but may miss unusual formats.
-8. **CORS**: Currently allows `localhost:3000` only. Update `CORS_ORIGINS` in `config.py` for production.
+1. **Job persistence** — Jobs are stored in-memory. Restarting the server clears all jobs. To add persistence, implement a `JobRepository` with Spring Data JPA backed by SQLite or PostgreSQL.
+2. **Algorithm performance** — Extreme Point has O(n²) placement search per box. For very large orders (500+ items), `FIRST_FIT` is faster.
+3. **Genetic algorithm** — Uses 5 generations × 10 population. Increase `GENERATIONS` and `POPULATION_SIZE` in `GeneticAlgorithm.java` for better solutions at the cost of runtime.
+4. **Stability validation** — Support fraction check is approximate (axis-aligned overlap). Does not model centre-of-mass tipping.
+5. **3D viewer performance** — The Three.js viewer renders all boxes as individual meshes. For 1000+ boxes, consider instanced meshes.
+6. **CORS** — Currently allows all origins (`*`). Restrict in `WebConfig.java` for production.

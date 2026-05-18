@@ -10,7 +10,7 @@ A full-stack web application for 3D warehouse palletisation optimisation, suppor
 |-----------|----------------------------------------------|
 | Frontend  | Next.js 14, React, TypeScript, TailwindCSS   |
 | 3D        | React Three Fiber / Three.js                 |
-| Backend   | Java 21, Spring Boot 3.3, Maven              |
+| Backend   | Java 21, Spring Boot 3.3, Gradle             |
 | Storage   | In-memory (no database required)             |
 | Parsing   | Apache POI (Excel), Apache Commons CSV       |
 
@@ -46,19 +46,19 @@ config/          # WebConfig (CORS)
 
 ### Backend
 
-Requires Java 21. Maven wrapper is included — no global Maven install needed.
+Requires Java 21. Gradle wrapper is included — no global Gradle install needed.
 
 ```bash
 cd backend
-./mvnw spring-boot:run
+./gradlew bootRun
 ```
 
 Or build and run the JAR directly:
 
 ```bash
 cd backend
-./mvnw package -DskipTests
-java -jar target/palletisation-0.1.0-SNAPSHOT.jar
+./gradlew bootJar -x test
+java -jar build/libs/palletisation-0.1.0-SNAPSHOT.jar
 ```
 
 API available at: http://localhost:8000
@@ -104,7 +104,7 @@ docker-compose up --build
 
 ```bash
 cd backend
-./mvnw test
+./gradlew test
 ```
 
 28 unit and integration tests covering all four algorithms, validation service, layout validation, and controller endpoints.

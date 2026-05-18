@@ -59,6 +59,16 @@ public class JobStoreService {
         return jobs.get(jobId);
     }
 
+    public PalletiseResponse getByOrderId(String orderId) {
+        if (orderId == null || orderId.isBlank()) return null;
+        for (PalletiseResponse result : jobs.values()) {
+            if (orderId.equals(result.getOrderId())) {
+                return get(result.getJobId());
+            }
+        }
+        return null;
+    }
+
     public void saveAdjusted(String jobId, List<PalletResult> pallets, String timestamp) {
         adjusted.put(jobId, pallets);
         adjustedAt.put(jobId, Instant.parse(timestamp));

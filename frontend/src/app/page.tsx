@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { PackageSearch, Upload, GitCompare, Settings2 } from "lucide-react";
+import OrderSearchPanel from "@/components/OrderSearchPanel";
 
 const cards = [
   {
@@ -45,6 +46,8 @@ export default function DashboardPage() {
           Plan, optimise, and visualise warehouse palletisation runs.
         </p>
       </div>
+
+      <OrderSearchPanel />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
         {cards.map(({ href, icon: Icon, title, desc, color, iconColor }) => (

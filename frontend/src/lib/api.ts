@@ -26,6 +26,13 @@ export async function getJob(jobId: string): Promise<PalletiseResponse> {
   return data;
 }
 
+export async function getOptimisationByOrderId(orderId: string): Promise<PalletiseResponse> {
+  const { data } = await api.get<PalletiseResponse>(
+    `/api/v1/orders/${encodeURIComponent(orderId)}/optimisation`
+  );
+  return data;
+}
+
 export async function uploadFile(file: File): Promise<UploadResponse> {
   const form = new FormData();
   form.append("file", file);

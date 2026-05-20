@@ -119,6 +119,34 @@ public final class StabilityUtils {
             }
         }
 
+        // Check stackability violations
+        for (Box base : pallet.getBoxes()) {
+            String s = base.getStackability();
+            if (s == null || "stackable".equals(s)) continue;
+            double topZ = base.getZ() + base.getHeight();
+            for (Box other : pallet.getBoxes()) {
+                if (other == base) continue;
+                if (Math.abs(other.getZ() - topZ) >= 1.0) continue;
+                // Check if other rests (at least partially) on base
+                if (supportAreaFraction(other, List.of(base)) <= 0) continue;
+                boolean violation = "non_stackable".equals(s)
+                        || ("self_stackable".equals(s) && !base.getSku().equals(other.getSku()));
+                if (violation) {
+                    String msg = String.format(
+                            "Box %s (SKU %s) is on top of %s (SKU %s) which has stackability '%s'.",
+                            other.getBoxId(), other.getSku(), base.getBoxId(), base.getSku(), s);
+                    StabilityIssue issue = new StabilityIssue();
+                    issue.setType("stackability");
+                    issue.setSeverity("warning");
+                    issue.setBoxId(other.getBoxId());
+                    issue.setPalletNo(palletNo);
+                    issue.setSku(other.getSku());
+                    issue.setMessage(msg);
+                    issues.add(issue);
+                }
+            }
+        }
+
         return new StabilityResult(floating, unstable, issues, warnings);
     }
 }

@@ -1,5 +1,6 @@
 package com.psap.palletisation.algorithm;
 
+import com.psap.palletisation.algorithm.util.CgUtils;
 import com.psap.palletisation.dto.request.Constraints;
 import com.psap.palletisation.dto.request.PalletSpec;
 import com.psap.palletisation.model.Box;
@@ -93,6 +94,28 @@ class ExtremePointAlgorithmTest {
         assertThat(placed).isNotNull();
         // Height must equal original height (200)
         assertThat(Math.abs(placed.getHeight() - 200.0)).isLessThan(1e-6);
+    }
+
+    @Test
+    void cgAware_twoSymmetricBoxes_lowCgOffset() {
+        // Two equal boxes that together cover the full pallet footprint symmetrically
+        List<Box> boxes = new ArrayList<>(List.of(
+                box("A", "SKU", 600, 1100, 300, 10),
+                box("B", "SKU", 600, 1100, 300, 10)
+        ));
+
+        Constraints c = defaultConstraints();
+        c.setCgAware(true);
+
+        List<Pallet> pallets = algorithm.run(boxes, defaultSpec(), c);
+        assertThat(pallets).isNotEmpty();
+
+        Pallet p = pallets.get(0);
+        assertThat(p.getBoxes()).hasSize(2);
+
+        CgUtils.CgResult cg = CgUtils.computeCg(p);
+        assertThat(cg.offsetFractionX).isLessThan(CgUtils.WARNING_OFFSET_FRACTION);
+        assertThat(cg.offsetFractionY).isLessThan(CgUtils.WARNING_OFFSET_FRACTION);
     }
 
     private boolean overlaps3D(Box a, Box b) {

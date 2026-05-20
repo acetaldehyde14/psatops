@@ -124,7 +124,7 @@ public class ExtremePointAlgorithm {
 
                 if (!canPlaceEP(pallet, candidate, pt.x(), pt.y(), pt.z(), constraints)) continue;
 
-                double score = ScoringUtils.scoreCandidate(candidate, constraints.isPreferLargerBase());
+                double score = ScoringUtils.scoreCandidate(candidate, pallet, constraints);
                 if (score < bestScore) {
                     bestScore = score;
                     bestCandidate = candidate;

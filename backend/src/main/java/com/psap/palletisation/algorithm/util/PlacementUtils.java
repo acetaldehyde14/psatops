@@ -57,6 +57,30 @@ public final class PlacementUtils {
     }
 
     /**
+     * Returns true if placing a box at (x, y, z) with dimensions (l, w) on the pallet
+     * would violate the stackability constraint of any box already placed beneath it.
+     *
+     * Rules:
+     *   non_stackable: nothing may be placed on top
+     *   self_stackable: only boxes of the same SKU may be placed on top
+     */
+    public static boolean hasStackabilityViolation(Pallet pallet, Box candidate,
+                                                    double x, double y, double z,
+                                                    double l, double w) {
+        for (Box placed : pallet.getBoxes()) {
+            String s = placed.getStackability();
+            if (s == null || "stackable".equals(s)) continue;
+            // The candidate must be resting on top of placed (z interfaces match within 1mm)
+            if (Math.abs((placed.getZ() + placed.getHeight()) - z) >= 1.0) continue;
+            // There must be horizontal overlap
+            if (xyOverlapArea(x, y, l, w, placed.getX(), placed.getY(), placed.getLength(), placed.getWidth()) <= 1.0) continue;
+            if ("non_stackable".equals(s)) return true;
+            if ("self_stackable".equals(s) && !placed.getSku().equals(candidate.getSku())) return true;
+        }
+        return false;
+    }
+
+    /**
      * Returns true if placing a box at (testX,testY,testZ) with (testL,testW) dimensions
      * would rest on a box that has no_load_on_top=true.
      * Ports has_no_load_on_top_violation() exactly.
@@ -81,6 +105,9 @@ public final class PlacementUtils {
                                                  Constraints constraints) {
         if (constraints.isEnforceNoLoadOnTop()
                 && hasNoLoadOnTopViolation(pallet, x, y, z, box.getLength(), box.getWidth())) {
+            return false;
+        }
+        if (hasStackabilityViolation(pallet, box, x, y, z, box.getLength(), box.getWidth())) {
             return false;
         }
         if (!constraints.isDoNotAllowStabilityIssues()) {

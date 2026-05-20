@@ -2,6 +2,7 @@ package com.psap.palletisation.algorithm;
 
 import com.psap.palletisation.algorithm.util.PlacementUtils;
 import com.psap.palletisation.algorithm.util.RotationUtils;
+import com.psap.palletisation.algorithm.util.ScoringUtils;
 import com.psap.palletisation.dto.request.Constraints;
 import com.psap.palletisation.dto.request.PalletSpec;
 import com.psap.palletisation.model.Box;
@@ -101,7 +102,8 @@ public class BestFitAlgorithm {
                 while (y + rot.w() <= pallet.getWidth() + 0.01) {
                     double z = FirstFitAlgorithm.findZ(pallet, box, x, y);
                     if (FirstFitAlgorithm.canPlace(pallet, box, x, y, z, constraints)) {
-                        double score = z + PlacementUtils.rotationScore(box, constraints.isPreferLargerBase());
+                        box.setX(x); box.setY(y); box.setZ(z);
+                        double score = ScoringUtils.scoreCandidate(box, pallet, constraints);
                         if (score < bestScore) {
                             bestScore = score;
                             bestPos = new Placement(x, y, z, rot.l(), rot.w(), rot.h(), rot.label());

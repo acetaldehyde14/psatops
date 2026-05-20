@@ -54,6 +54,8 @@ export interface ItemRequest {
   requested_delivery_date?: string;
   stand_upright_only?: boolean;
   no_load_on_top?: boolean;
+  stackability?: "stackable" | "self_stackable" | "non_stackable";
+  goods_type?: ("dg" | "pack_last" | "breakbulk" | "yet_to_receive")[];
 }
 
 export interface PalletiseRequest {
@@ -95,6 +97,7 @@ export interface BoxResult {
   expiry_date?: string;
   stand_upright_only?: boolean;
   no_load_on_top?: boolean;
+  stackability?: "stackable" | "self_stackable" | "non_stackable";
   original_height_mm?: number;
 }
 
@@ -106,6 +109,14 @@ export interface PalletResult {
   box_count: number;
   sku_totals?: Record<string, number>;
   boxes: BoxResult[];
+  // Center-of-gravity fields (populated by backend CgUtils)
+  cg_xmm?: number;
+  cg_ymm?: number;
+  cg_offset_xmm?: number;
+  cg_offset_ymm?: number;
+  cg_offset_fraction_x?: number;
+  cg_offset_fraction_y?: number;
+  cg_severity?: "ok" | "warning" | "error";
 }
 
 export interface SummaryResult {

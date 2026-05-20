@@ -2,6 +2,7 @@ package com.psap.palletisation.algorithm;
 
 import com.psap.palletisation.algorithm.util.PlacementUtils;
 import com.psap.palletisation.algorithm.util.RotationUtils;
+import com.psap.palletisation.algorithm.util.ScoringUtils;
 import com.psap.palletisation.dto.request.Constraints;
 import com.psap.palletisation.dto.request.PalletSpec;
 import com.psap.palletisation.model.Box;
@@ -77,6 +78,9 @@ public class FirstFitAlgorithm {
         double origL = box.getLength(), origW = box.getWidth(), origH = box.getHeight();
         String origRot = box.getRotation();
 
+        Placement bestPos = null;
+        double bestScore = Double.POSITIVE_INFINITY;
+
         List<RotationUtils.Rotation> rotations = RotationUtils.getAllowedRotations(
                 box, constraints.isAllowRotation(), constraints.isPreferLargerBase());
 
@@ -90,8 +94,12 @@ public class FirstFitAlgorithm {
                 while (y + rot.w() <= pallet.getWidth() + 0.01) {
                     double z = findZ(pallet, box, x, y);
                     if (canPlace(pallet, box, x, y, z, constraints)) {
-                        box.setLength(origL); box.setWidth(origW); box.setHeight(origH); box.setRotation(origRot);
-                        return new Placement(x, y, z, rot.l(), rot.w(), rot.h(), rot.label());
+                        box.setX(x); box.setY(y); box.setZ(z);
+                        double score = ScoringUtils.scoreCandidate(box, pallet, constraints);
+                        if (score < bestScore) {
+                            bestScore = score;
+                            bestPos = new Placement(x, y, z, rot.l(), rot.w(), rot.h(), rot.label());
+                        }
                     }
                     y += rot.w();
                 }
@@ -100,7 +108,7 @@ public class FirstFitAlgorithm {
         }
 
         box.setLength(origL); box.setWidth(origW); box.setHeight(origH); box.setRotation(origRot);
-        return null;
+        return bestPos;
     }
 
     static double findZ(Pallet pallet, Box box, double x, double y) {

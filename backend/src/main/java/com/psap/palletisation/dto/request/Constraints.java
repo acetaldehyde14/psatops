@@ -25,6 +25,7 @@ public class Constraints {
     private boolean respectDeliveryDate = false;
     private boolean preferPartialPallets = true;
     private boolean preferLocationCluster = true;
+    private boolean cgAware = true;
 
     public boolean isAllowRotation() { return allowRotation; }
     public void setAllowRotation(boolean allowRotation) { this.allowRotation = allowRotation; }
@@ -58,4 +59,7 @@ public class Constraints {
 
     public boolean isPreferLocationCluster() { return preferLocationCluster; }
     public void setPreferLocationCluster(boolean preferLocationCluster) { this.preferLocationCluster = preferLocationCluster; }
+
+    public boolean isCgAware() { return cgAware; }
+    public void setCgAware(boolean cgAware) { this.cgAware = cgAware; }
 }

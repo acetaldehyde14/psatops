@@ -1,5 +1,6 @@
 package com.psap.palletisation.algorithm;
 
+import com.psap.palletisation.algorithm.util.CgUtils;
 import com.psap.palletisation.algorithm.util.RotationUtils;
 import com.psap.palletisation.algorithm.util.ScoringUtils;
 import com.psap.palletisation.algorithm.util.StabilityUtils;
@@ -199,6 +200,7 @@ public class OptimiserService {
                 b.setRequestedDeliveryDate(item.getRequestedDeliveryDate());
                 b.setStandUprightOnly(item.isStandUprightOnly());
                 b.setNoLoadOnTop(item.resolvedNoLoadOnTop());
+                b.setStackability(item.resolvedStackability());
                 boxes.add(b);
             }
             lineIndex++;
@@ -308,6 +310,19 @@ public class OptimiserService {
             allWarnings.addAll(stab.warnings());
             stabilityIssues.addAll(stab.issues());
 
+            CgUtils.CgResult cgResult = CgUtils.computeCg(pallet);
+            if (!"ok".equals(cgResult.severity)) {
+                StabilityIssue cgIssue = new StabilityIssue();
+                cgIssue.setType("cg_offset");
+                cgIssue.setSeverity(cgResult.severity);
+                cgIssue.setPalletNo(pallet.getPalletNo());
+                cgIssue.setMessage(String.format(
+                    "CG offset: X=%.1fmm (%.1f%%), Y=%.1fmm (%.1f%%) from centre",
+                    cgResult.offsetX, cgResult.offsetFractionX * 100,
+                    cgResult.offsetY, cgResult.offsetFractionY * 100));
+                stabilityIssues.add(cgIssue);
+            }
+
             double usedVol = pallet.getUsedVolume();
             double volUtil = palletVol > 0 ? usedVol / palletVol * 100 : 0;
             double usedArea = pallet.getBoxes().stream().mapToDouble(b -> b.getLength() * b.getWidth()).sum();
@@ -358,6 +373,7 @@ public class OptimiserService {
                 br.setExpiryDate(b.getExpiryDate());
                 br.setStandUprightOnly(b.isStandUprightOnly());
                 br.setNoLoadOnTop(b.isNoLoadOnTop());
+                br.setStackability(b.getStackability());
                 br.setOriginalHeightMm(round2(b.getOriginalHeight() != null ? b.getOriginalHeight() : b.getHeight()));
                 boxResults.add(br);
             }
@@ -370,6 +386,13 @@ public class OptimiserService {
             pr.setBoxCount(pallet.getBoxes().size());
             pr.setSkuTotals(palletSkuTotals);
             pr.setBoxes(boxResults);
+            pr.setCgXMm(Math.round(cgResult.cgX * 100.0) / 100.0);
+            pr.setCgYMm(Math.round(cgResult.cgY * 100.0) / 100.0);
+            pr.setCgOffsetXMm(Math.round(cgResult.offsetX * 100.0) / 100.0);
+            pr.setCgOffsetYMm(Math.round(cgResult.offsetY * 100.0) / 100.0);
+            pr.setCgOffsetFractionX(Math.round(cgResult.offsetFractionX * 10000.0) / 10000.0);
+            pr.setCgOffsetFractionY(Math.round(cgResult.offsetFractionY * 10000.0) / 10000.0);
+            pr.setCgSeverity(cgResult.severity);
             palletResults.add(pr);
         }
 

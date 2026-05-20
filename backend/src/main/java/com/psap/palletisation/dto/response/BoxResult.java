@@ -37,6 +37,7 @@ public class BoxResult {
     private String expiryDate;
     private boolean standUprightOnly = false;
     private boolean noLoadOnTop = false;
+    private String stackability;
     private Double originalHeightMm;
 
     public String getBoxId() { return boxId; }
@@ -131,6 +132,9 @@ public class BoxResult {
 
     public boolean isNoLoadOnTop() { return noLoadOnTop; }
     public void setNoLoadOnTop(boolean noLoadOnTop) { this.noLoadOnTop = noLoadOnTop; }
+
+    public String getStackability() { return stackability; }
+    public void setStackability(String stackability) { this.stackability = stackability; }
 
     public Double getOriginalHeightMm() { return originalHeightMm; }
     public void setOriginalHeightMm(Double originalHeightMm) { this.originalHeightMm = originalHeightMm; }

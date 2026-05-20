@@ -15,6 +15,14 @@ public class PalletResult {
     private Map<String, Integer> skuTotals = new HashMap<>();
     private List<BoxResult> boxes = new ArrayList<>();
 
+    private Double cgXMm;
+    private Double cgYMm;
+    private Double cgOffsetXMm;
+    private Double cgOffsetYMm;
+    private Double cgOffsetFractionX;
+    private Double cgOffsetFractionY;
+    private String cgSeverity;
+
     public int getPalletNo() { return palletNo; }
     public void setPalletNo(int palletNo) { this.palletNo = palletNo; }
 
@@ -35,4 +43,19 @@ public class PalletResult {
 
     public List<BoxResult> getBoxes() { return boxes; }
     public void setBoxes(List<BoxResult> boxes) { this.boxes = boxes; }
+
+    public Double getCgXMm() { return cgXMm; }
+    public void setCgXMm(Double cgXMm) { this.cgXMm = cgXMm; }
+    public Double getCgYMm() { return cgYMm; }
+    public void setCgYMm(Double cgYMm) { this.cgYMm = cgYMm; }
+    public Double getCgOffsetXMm() { return cgOffsetXMm; }
+    public void setCgOffsetXMm(Double cgOffsetXMm) { this.cgOffsetXMm = cgOffsetXMm; }
+    public Double getCgOffsetYMm() { return cgOffsetYMm; }
+    public void setCgOffsetYMm(Double cgOffsetYMm) { this.cgOffsetYMm = cgOffsetYMm; }
+    public Double getCgOffsetFractionX() { return cgOffsetFractionX; }
+    public void setCgOffsetFractionX(Double cgOffsetFractionX) { this.cgOffsetFractionX = cgOffsetFractionX; }
+    public Double getCgOffsetFractionY() { return cgOffsetFractionY; }
+    public void setCgOffsetFractionY(Double cgOffsetFractionY) { this.cgOffsetFractionY = cgOffsetFractionY; }
+    public String getCgSeverity() { return cgSeverity; }
+    public void setCgSeverity(String cgSeverity) { this.cgSeverity = cgSeverity; }
 }

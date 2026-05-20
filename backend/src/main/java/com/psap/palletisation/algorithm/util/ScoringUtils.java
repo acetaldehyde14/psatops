@@ -4,6 +4,7 @@ import com.psap.palletisation.dto.request.Constraints;
 import com.psap.palletisation.model.Box;
 import com.psap.palletisation.model.Pallet;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -40,15 +41,8 @@ public final class ScoringUtils {
             totalUtil += util;
 
             if (!p.getBoxes().isEmpty()) {
-                double totalW = p.getBoxes().stream().mapToDouble(Box::getWeight).sum();
-                if (totalW == 0) totalW = 1;
-                double cx = p.getBoxes().stream()
-                        .mapToDouble(b -> (b.getX() + b.getLength() / 2.0) * b.getWeight())
-                        .sum() / totalW;
-                double cy = p.getBoxes().stream()
-                        .mapToDouble(b -> (b.getY() + b.getWidth() / 2.0) * b.getWeight())
-                        .sum() / totalW;
-                cogPenalty += Math.abs(cx - p.getLength() / 2.0) + Math.abs(cy - p.getWidth() / 2.0);
+                CgUtils.CgResult cgResult = CgUtils.computeCg(p);
+                cogPenalty += Math.abs(cgResult.offsetX) + Math.abs(cgResult.offsetY);
 
                 for (Box b : p.getBoxes()) {
                     if (constraints != null && constraints.isPreferLargerBase()) {
@@ -73,7 +67,8 @@ public final class ScoringUtils {
      * Score a single placement candidate (lower = better).
      * Ports score_candidate() exactly.
      */
-    public static double scoreCandidate(Box candidate, boolean preferLargerBase) {
+    public static double scoreCandidate(Box candidate, Pallet pallet, Constraints constraints) {
+        boolean preferLargerBase = constraints != null && constraints.isPreferLargerBase();
         double score = candidate.getZ() * 1000.0 + candidate.getX() + candidate.getY();
 
         if (preferLargerBase && !candidate.isStandUprightOnly()) {
@@ -88,6 +83,14 @@ public final class ScoringUtils {
             if (Math.abs(candidate.getHeight() - smallest) > 1e-6) {
                 score += 100000;
             }
+        }
+
+        if (constraints != null && constraints.isCgAware()) {
+            List<Box> prospective = new ArrayList<>(pallet.getBoxes().size() + 1);
+            prospective.addAll(pallet.getBoxes());
+            prospective.add(candidate);
+            CgUtils.CgResult cg = CgUtils.computeCg(prospective, pallet.getLength(), pallet.getWidth());
+            score += (cg.offsetFractionX + cg.offsetFractionY) * 50.0;
         }
 
         return score;

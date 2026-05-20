@@ -46,6 +46,8 @@ public class ParserService {
         FIELD_ALIASES.put("center_label", List.of("center_label"));
         FIELD_ALIASES.put("center_expected_cartons", List.of("center_expected_cartons"));
 
+        FIELD_ALIASES.put("stackability", List.of("stackability", "stack_rule", "stacking", "stack_type"));
+
         BOOL_CONSTRAINT_ALIASES.put("stand_upright_only", List.of("stand_upright_only", "upright_only", "must_stand_upright"));
         BOOL_CONSTRAINT_ALIASES.put("no_load_on_top", List.of("no_load_on_top", "noloadsontop", "no_loads_on_top", "no_stack_on_top", "top_load_forbidden"));
     }
@@ -211,6 +213,9 @@ public class ParserService {
             Object val = getField(row, canonical, cols);
             if (!isMissing(val)) item.put(canonical, val.toString());
         }
+        // Stackability: pass through as-is (lowercased and stripped)
+        Object stackabilityVal = getField(row, "stackability", cols);
+        if (!isMissing(stackabilityVal)) item.put("stackability", stackabilityVal.toString().strip().toLowerCase());
         for (String canonical : List.of("total_qty_pcs", "qty_per_ctn", "center_expected_cartons")) {
             Object val = getField(row, canonical, cols);
             if (!isMissing(val)) {

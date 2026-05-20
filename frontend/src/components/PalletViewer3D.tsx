@@ -10,6 +10,8 @@ import { applySnappingDetailed, applyMagneticSnap, snapToHorizontalGap, type Sna
 import { isBoxInLockedRow, getMovableSelection, type LockedRow } from "@/lib/rowLocking";
 import { validateBoxesLightweight, validateLayout } from "@/lib/layoutValidation";
 import { autoFitOnRelease as runAutoFitOnRelease } from "@/lib/autoFit";
+import { computeCgFromBoxes, computeLevelStability } from "@/lib/cgUtils";
+import clsx from "clsx";
 import * as THREE from "three";
 
 export type ViewMode = "normal" | "xray" | "solid";
@@ -347,6 +349,56 @@ const BoxMesh = memo(function BoxMesh({
   );
 });
 
+// ── Center-of-gravity indicator ───────────────────────────────────────────────
+interface CgIndicatorProps {
+  boxes: BoxResult[];
+  palletLengthMm: number;
+  palletWidthMm: number;
+  severity?: "ok" | "warning" | "error";
+}
+
+function CgIndicator({ boxes, palletLengthMm, palletWidthMm, severity }: CgIndicatorProps) {
+  const cg = computeCgFromBoxes(boxes);
+  if (!cg) return null;
+
+  // suppress unused-var warning for palletLengthMm/palletWidthMm — kept for future margin check
+  void palletLengthMm;
+  void palletWidthMm;
+
+  const color =
+    severity === "error" ? "#ef4444" :
+    severity === "warning" ? "#f59e0b" :
+    severity === "ok" ? "#22c55e" : "#6b7280";
+
+  const sx = cg.x * SCALE;        // pallet length → scene X
+  const sy = cg.y * SCALE;        // pallet width  → scene Y
+  const sz = cg.z * SCALE;        // vertical height → scene Z
+
+  const arm = 0.03; // crosshair half-length in scene units
+
+  return (
+    <group>
+      {/* Drop line from CG to ground (Z=0 is ground) */}
+      <Line
+        points={[[sx, sy, 0], [sx, sy, sz]]}
+        color={color}
+        lineWidth={1.5}
+        dashed
+        dashSize={0.015}
+        gapSize={0.01}
+      />
+      {/* CG sphere */}
+      <mesh position={[sx, sy, sz]}>
+        <sphereGeometry args={[0.018, 16, 16]} />
+        <meshStandardMaterial color={color} />
+      </mesh>
+      {/* Ground projection crosshair (at Z≈0) */}
+      <Line points={[[sx - arm, sy, 0.001], [sx + arm, sy, 0.001]]} color={color} lineWidth={2} />
+      <Line points={[[sx, sy - arm, 0.001], [sx, sy + arm, 0.001]]} color={color} lineWidth={2} />
+    </group>
+  );
+}
+
 // ── Orbit control with spacebar toggle ───────────────────────────────────────
 function SpacebarOrbit({
   orbitActive, controlsRef,
@@ -403,6 +455,8 @@ export default function PalletViewer3D({
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
   const [autoFitGhostBoxes, setAutoFitGhostBoxes] = useState<BoxResult[]>([]);
   const [hoveredBoxId, setHoveredBoxId] = useState<string | null>(null);
+  const [showCg, setShowCg] = useState(true);
+  const [showLevels, setShowLevels] = useState(false);
   const controlsRef = useRef<any>(null);
   const boxControllers = useRef(new Map<string, BoxPreviewController>());
 
@@ -956,6 +1010,15 @@ export default function PalletViewer3D({
 
         <AutoFitGhostBoxes boxes={autoFitGhostBoxes} />
 
+        {showCg && (
+          <CgIndicator
+            boxes={pallet.boxes}
+            palletLengthMm={palletSpec.length_mm}
+            palletWidthMm={palletSpec.width_mm}
+            severity={pallet.cg_severity}
+          />
+        )}
+
         <SpacebarOrbit
           orbitActive={!editMode || orbitActive}
           controlsRef={controlsRef}
@@ -996,6 +1059,67 @@ export default function PalletViewer3D({
       >
         Reset Camera
       </button>
+
+      {/* CG toggle */}
+      <div className="absolute top-24 right-3 flex flex-col gap-1">
+        <button
+          type="button"
+          onClick={() => setShowCg((v) => !v)}
+          className={clsx(
+            "rounded border px-2 py-1 text-[11px] font-semibold shadow",
+            showCg ? "bg-slate-700 text-white border-slate-600" : "bg-white text-slate-600 border-slate-300"
+          )}
+        >
+          CG
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowLevels((v) => !v)}
+          className={clsx(
+            "rounded border px-2 py-1 text-[11px] font-semibold shadow",
+            showLevels ? "bg-slate-700 text-white border-slate-600" : "bg-white text-slate-600 border-slate-300"
+          )}
+        >
+          Levels
+        </button>
+      </div>
+
+      {showLevels && (() => {
+        const levels = computeLevelStability(pallet.boxes, palletSpec.length_mm, palletSpec.width_mm);
+        if (levels.length === 0) return null;
+        return (
+          <div className="absolute bottom-12 right-3 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white/90 text-xs shadow-lg backdrop-blur-sm">
+            <table className="border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50">
+                  <th className="px-2 py-1 text-left font-semibold text-slate-600">Z (mm)</th>
+                  <th className="px-2 py-1 text-left font-semibold text-slate-600">Boxes ↑</th>
+                  <th className="px-2 py-1 text-left font-semibold text-slate-600">Margin</th>
+                  <th className="px-2 py-1 text-left font-semibold text-slate-600">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {levels.map((lvl) => (
+                  <tr key={lvl.heightMm} className="border-b border-slate-100 last:border-0">
+                    <td className="px-2 py-1 tabular-nums">{lvl.heightMm.toFixed(0)}</td>
+                    <td className="px-2 py-1 tabular-nums">{lvl.aboveCount}</td>
+                    <td className={clsx("px-2 py-1 tabular-nums", lvl.pass ? "text-green-700" : "text-red-600")}>
+                      {lvl.marginMm.toFixed(1)}
+                    </td>
+                    <td className="px-2 py-1">
+                      {lvl.pass ? (
+                        <span className="text-green-700 font-semibold">✓</span>
+                      ) : (
+                        <span className="text-red-600 font-semibold">✗</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
 
       {!editMode && !onBoxClick && (
         <BoxInspectorPanel box={viewSelected} onClose={() => setViewSelected(null)} />

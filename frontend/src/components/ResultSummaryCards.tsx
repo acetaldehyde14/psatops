@@ -56,9 +56,29 @@ function Card({
 }
 
 export default function ResultSummaryCards({ summary, onStabilityClick }: Props) {
-  const hasWarnings =
-    summary.floating_boxes > 0 || summary.unstable_boxes > 0;
+  const hasBoxWarnings = summary.floating_boxes > 0 || summary.unstable_boxes > 0;
+  const cgIssues = (summary.stability_issues ?? []).filter((i) => i.type === "cg_offset");
+  const cgErrors   = cgIssues.filter((i) => i.severity === "error").length;
+  const cgWarnings = cgIssues.filter((i) => i.severity === "warning").length;
+  const hasCgIssues = cgIssues.length > 0;
+  const hasWarnings = hasBoxWarnings || hasCgIssues;
   const centerCount = Object.keys(summary.center_totals ?? {}).length;
+
+  let stabilityValue: string;
+  let stabilitySub: string;
+  if (!hasWarnings) {
+    stabilityValue = "OK";
+    stabilitySub = "No warnings";
+  } else {
+    const parts: string[] = [];
+    if (summary.floating_boxes > 0) parts.push(`${summary.floating_boxes} floating`);
+    if (summary.unstable_boxes > 0) parts.push(`${summary.unstable_boxes} unstable`);
+    if (cgErrors > 0) parts.push(`${cgErrors} CG error${cgErrors > 1 ? "s" : ""}`);
+    else if (cgWarnings > 0) parts.push(`${cgWarnings} CG warn`);
+    stabilityValue = `${summary.floating_boxes + summary.unstable_boxes + cgIssues.length} issues`;
+    stabilitySub = parts.join(", ");
+  }
+
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
       <Card label="Pallets" value={summary.pallets_used} sub="used" />
@@ -80,8 +100,8 @@ export default function ResultSummaryCards({ summary, onStabilityClick }: Props)
       />
       <Card
         label="Stability"
-        value={hasWarnings ? `${summary.floating_boxes + summary.unstable_boxes} issues` : "OK"}
-        sub={hasWarnings ? `${summary.floating_boxes} floating, ${summary.unstable_boxes} unstable` : "No warnings"}
+        value={stabilityValue}
+        sub={stabilitySub}
         warn={hasWarnings}
         clickable={hasWarnings}
         onClick={onStabilityClick}

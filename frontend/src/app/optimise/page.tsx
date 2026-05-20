@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import ConstraintForm from "@/components/ConstraintForm";
 import { palletise } from "@/lib/api";
@@ -15,6 +15,17 @@ export default function OptimisePage() {
   const [orderId, setOrderId] = useState("");
   const [itemsText, setItemsText] = useState("");
   const [fromUpload, setFromUpload] = useState(false);
+  const [skuStackability, setSkuStackability] = useState<Record<string, "stackable" | "self_stackable" | "non_stackable">>({});
+  const [skuGoodsType, setSkuGoodsType] = useState<Record<string, ("dg" | "pack_last" | "breakbulk" | "yet_to_receive")[]>>({});
+
+  const parsedItems: ItemRequest[] = useMemo(() => {
+    try { return JSON.parse(itemsText); } catch { return []; }
+  }, [itemsText]);
+
+  const uniqueSkus: string[] = useMemo(
+    () => Array.from(new Set(parsedItems.map((i) => i.sku).filter((s): s is string => Boolean(s)))),
+    [parsedItems]
+  );
 
   useEffect(() => {
     const saved = localStorage.getItem("uploaded_items");
@@ -24,6 +35,13 @@ export default function OptimisePage() {
         setItemsText(JSON.stringify(items, null, 2));
         setFromUpload(true);
         localStorage.removeItem("uploaded_items");
+        const skus = Array.from(new Set(items.map((i: ItemRequest) => i.sku).filter(Boolean))) as string[];
+        const defaults: Record<string, "stackable" | "self_stackable" | "non_stackable"> = {};
+        skus.forEach((sku) => { defaults[sku] = "stackable"; });
+        setSkuStackability(defaults);
+        const goodsDefaults: Record<string, ("dg" | "pack_last" | "breakbulk" | "yet_to_receive")[]> = {};
+        skus.forEach((sku) => { goodsDefaults[sku] = []; });
+        setSkuGoodsType(goodsDefaults);
       } catch {
         // ignore corrupt data
       }
@@ -39,7 +57,12 @@ export default function OptimisePage() {
       if (!itemsText.trim()) {
         throw new Error("No order data loaded");
       }
-      const items: ItemRequest[] = JSON.parse(itemsText);
+      const rawItems: ItemRequest[] = JSON.parse(itemsText);
+      const items: ItemRequest[] = rawItems.map((item) => ({
+        ...item,
+        stackability: skuStackability[item.sku] ?? item.stackability ?? "stackable",
+        goods_type: skuGoodsType[item.sku] ?? item.goods_type,
+      }));
       if (!Array.isArray(items) || items.length === 0) {
         throw new Error("No order data loaded");
       }
@@ -95,6 +118,62 @@ export default function OptimisePage() {
         <div className="mb-5 flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
           <span className="font-medium">Items loaded from upload.</span>
           <span className="text-green-500">Review below and click Run Optimisation.</span>
+        </div>
+      )}
+
+      {uniqueSkus.length > 0 && (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm mb-6">
+          <div className="mb-3 text-sm font-semibold text-slate-700">SKU Overrides</div>
+          <div className="space-y-2">
+            {uniqueSkus.map((sku) => (
+              <div key={sku} className="flex items-center gap-3">
+                <span className="w-48 truncate font-mono text-xs text-slate-600">{sku}</span>
+                <select
+                  value={skuStackability[sku] ?? "stackable"}
+                  onChange={(e) =>
+                    setSkuStackability((prev) => ({
+                      ...prev,
+                      [sku]: e.target.value as "stackable" | "self_stackable" | "non_stackable",
+                    }))
+                  }
+                  className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                >
+                  <option value="stackable">Stackable</option>
+                  <option value="self_stackable">Self-stackable</option>
+                  <option value="non_stackable">Non-stackable</option>
+                </select>
+                <div className="flex items-center gap-1.5">
+                  {(["dg", "pack_last", "breakbulk", "yet_to_receive"] as const).map((gt) => {
+                    const selected = (skuGoodsType[sku] ?? []).includes(gt);
+                    return (
+                      <button
+                        key={gt}
+                        type="button"
+                        onClick={() =>
+                          setSkuGoodsType((prev) => {
+                            const current = prev[sku] ?? [];
+                            return {
+                              ...prev,
+                              [sku]: selected
+                                ? current.filter((v) => v !== gt)
+                                : [...current, gt],
+                            };
+                          })
+                        }
+                        className={`px-2 py-1 text-xs rounded border font-medium transition-colors ${
+                          selected
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-white text-slate-600 border-slate-300 hover:border-blue-400"
+                        }`}
+                      >
+                        {gt === "dg" ? "DG" : gt === "pack_last" ? "Pack Last" : gt === "breakbulk" ? "Breakbulk" : "Yet to Receive"}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

@@ -785,17 +785,57 @@ export default function ResultsPage() {
 
       {/* Pallet tabs */}
       <div className="flex gap-2 px-6 py-1.5 flex-shrink-0 flex-wrap border-b border-gray-100">
-        {activePallets.map((p, i) => (
-          <button key={i}
-            onClick={() => { setSelectedPallet(i); setLayerFilter(null); setSelectedBoxIds(new Set()); setSelectedBoxId(null); setActiveIssue(null); }}
-            className={clsx("px-3 py-1.5 rounded text-sm font-medium border transition-colors",
-              selectedPallet === i
-                ? "bg-blue-600 text-white border-blue-600"
-                : "bg-white text-gray-700 border-gray-300 hover:border-blue-400")}>
-            Pallet {p.pallet_no} ({p.box_count})
-          </button>
-        ))}
+        {activePallets.map((p, i) => {
+          const cgSev = p.cg_severity;
+          const cgDot = cgSev === "error"
+            ? <span className="ml-1.5 inline-block w-2 h-2 rounded-full bg-red-500 flex-shrink-0" title="CG error" />
+            : cgSev === "warning"
+            ? <span className="ml-1.5 inline-block w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" title="CG warning" />
+            : null;
+          return (
+            <button key={i}
+              onClick={() => { setSelectedPallet(i); setLayerFilter(null); setSelectedBoxIds(new Set()); setSelectedBoxId(null); setActiveIssue(null); }}
+              className={clsx("flex items-center px-3 py-1.5 rounded text-sm font-medium border transition-colors",
+                selectedPallet === i
+                  ? "bg-blue-600 text-white border-blue-600"
+                  : "bg-white text-gray-700 border-gray-300 hover:border-blue-400")}>
+              Pallet {p.pallet_no} ({p.box_count}){cgDot}
+            </button>
+          );
+        })}
       </div>
+
+      {/* Per-pallet CG strip */}
+      {pallet && (() => {
+        const sev = pallet.cg_severity;
+        if (!sev) return null;
+        const ox = pallet.cg_offset_xmm ?? 0;
+        const oy = pallet.cg_offset_ymm ?? 0;
+        const fx = ((pallet.cg_offset_fraction_x ?? 0) * 100).toFixed(1);
+        const fy = ((pallet.cg_offset_fraction_y ?? 0) * 100).toFixed(1);
+        const cgx = (pallet.cg_xmm ?? 0).toFixed(1);
+        const cgy = (pallet.cg_ymm ?? 0).toFixed(1);
+        const colors = sev === "error"
+          ? { bg: "bg-red-50", border: "border-red-200", dot: "bg-red-500", text: "text-red-700", badge: "bg-red-100 text-red-700 border-red-200" }
+          : sev === "warning"
+          ? { bg: "bg-amber-50", border: "border-amber-200", dot: "bg-amber-500", text: "text-amber-700", badge: "bg-amber-100 text-amber-700 border-amber-200" }
+          : { bg: "bg-green-50", border: "border-green-200", dot: "bg-green-500", text: "text-green-700", badge: "bg-green-100 text-green-700 border-green-200" };
+        return (
+          <div className={clsx("flex items-center gap-4 px-6 py-2 border-b flex-shrink-0 text-xs flex-wrap", colors.bg, colors.border)}>
+            <div className="flex items-center gap-1.5 font-semibold">
+              <span className={clsx("w-2 h-2 rounded-full flex-shrink-0", colors.dot)} />
+              <span className={colors.text}>Center of Gravity — Pallet {pallet.pallet_no}</span>
+              <span className={clsx("ml-1 px-1.5 py-0.5 rounded border text-[10px] font-bold uppercase", colors.badge)}>{sev}</span>
+            </div>
+            <div className="flex gap-4 text-gray-600">
+              <span>Position: <span className="font-medium text-gray-900">X {cgx} mm, Y {cgy} mm</span></span>
+              <span>Offset X: <span className={clsx("font-medium", sev !== "ok" && colors.text)}>{ox >= 0 ? "+" : ""}{ox.toFixed(1)} mm ({fx}%)</span></span>
+              <span>Offset Y: <span className={clsx("font-medium", sev !== "ok" && colors.text)}>{oy >= 0 ? "+" : ""}{oy.toFixed(1)} mm ({fy}%)</span></span>
+              <span className="text-gray-400">Thresholds: ok &lt;15% · warning &lt;30% · error ≥30%</span>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Main content */}
       <div className="flex flex-1 min-h-[640px] overflow-hidden">

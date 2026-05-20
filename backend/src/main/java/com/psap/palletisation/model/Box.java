@@ -41,6 +41,7 @@ public class Box {
     // Box constraints
     private boolean standUprightOnly = false;
     private boolean noLoadOnTop = false;
+    private String stackability = "stackable";
 
     // Placement results
     private double x = 0.0;
@@ -81,6 +82,7 @@ public class Box {
         this.sourceRow = other.sourceRow;
         this.standUprightOnly = other.standUprightOnly;
         this.noLoadOnTop = other.noLoadOnTop;
+        this.stackability = other.stackability;
         this.x = other.x;
         this.y = other.y;
         this.z = other.z;
@@ -173,6 +175,9 @@ public class Box {
 
     public boolean isNoLoadOnTop() { return noLoadOnTop; }
     public void setNoLoadOnTop(boolean noLoadOnTop) { this.noLoadOnTop = noLoadOnTop; }
+
+    public String getStackability() { return stackability; }
+    public void setStackability(String stackability) { this.stackability = stackability; }
 
     public double getX() { return x; }
     public void setX(double x) { this.x = x; }

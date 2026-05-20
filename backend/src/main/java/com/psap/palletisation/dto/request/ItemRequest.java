@@ -3,6 +3,7 @@ package com.psap.palletisation.dto.request;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class ItemRequest {
@@ -19,6 +20,7 @@ public class ItemRequest {
     private double weightKg = 0;
     private boolean standUprightOnly = false;
     private boolean noLoadOnTop = false;
+    private String stackability;
     private String noloadsontop;
     private String item;
     private String lotNo;
@@ -40,6 +42,7 @@ public class ItemRequest {
     private String dcNo;
     private String centerLabel;
     private Double centerExpectedCartons;
+    private List<String> goodsType;
 
     // Extra fields captured during deserialization for flexible input
     private final Map<String, Object> extra = new HashMap<>();
@@ -70,6 +73,11 @@ public class ItemRequest {
             return parseBoolish(noloadsontop);
         }
         return noLoadOnTop;
+    }
+
+    /** Returns the stackability value, defaulting to "stackable" if null. */
+    public String resolvedStackability() {
+        return stackability != null ? stackability : "stackable";
     }
 
     private static boolean parseBoolish(String value) {
@@ -128,6 +136,9 @@ public class ItemRequest {
 
     public boolean isNoLoadOnTop() { return noLoadOnTop; }
     public void setNoLoadOnTop(boolean noLoadOnTop) { this.noLoadOnTop = noLoadOnTop; }
+
+    public String getStackability() { return stackability; }
+    public void setStackability(String stackability) { this.stackability = stackability; }
 
     public String getNoloadsontop() { return noloadsontop; }
     public void setNoloadsontop(String noloadsontop) { this.noloadsontop = noloadsontop; }
@@ -197,6 +208,9 @@ public class ItemRequest {
 
     public Double getCenterExpectedCartons() { return centerExpectedCartons; }
     public void setCenterExpectedCartons(Double centerExpectedCartons) { this.centerExpectedCartons = centerExpectedCartons; }
+
+    public List<String> getGoodsType() { return goodsType; }
+    public void setGoodsType(List<String> goodsType) { this.goodsType = goodsType; }
 
     public Map<String, Object> getExtra() { return extra; }
 }

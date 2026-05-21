@@ -20,24 +20,219 @@ A full-stack web application for 3D warehouse palletisation optimisation, suppor
 
 ```
 .
-├── backend/          # Java Spring Boot backend (port 8000)
-├── frontend/         # Next.js frontend (port 3000)
-└── docker-compose.yml
-```
-
-### Backend package layout (`backend/src/main/java/com/psap/palletisation/`)
-
-```
-algorithm/       # FirstFit, BestFit, ExtremePoint, Genetic, OptimiserService
-algorithm/util/  # PlacementUtils, RotationUtils, ScoringUtils, StabilityUtils
-controller/      # PalletiseController, JobController, UploadController, HealthController
-dto/request/     # PalletiseRequest, ItemRequest, Constraints, PalletSpec, LayoutPatchRequest
-dto/response/    # PalletiseResponse, BoxResult, PalletResult, SummaryResult, ...
-enums/           # AlgorithmType, StackBy, FractionalQuantityMode
-model/           # Box, Pallet (internal domain models)
-service/         # JobStoreService, ValidationService, LayoutValidationService, ExportService, ParserService
-exception/       # GlobalExceptionHandler
-config/          # WebConfig (CORS)
+├── AGENTS.md
+├── CLAUDE.md
+├── README.md
+├── docker-compose.yml
+├── .gitattributes
+├── .gitignore
+├── .nvmrc
+│
+├── backend/
+│   ├── Dockerfile
+│   ├── build.gradle
+│   ├── settings.gradle
+│   ├── gradlew
+│   ├── gradlew.bat
+│   ├── docs/
+│   │   └── cargoclique-database.md
+│   ├── gradle/
+│   │   └── wrapper/
+│   │       ├── gradle-wrapper.jar
+│   │       └── gradle-wrapper.properties
+│   └── src/
+│       ├── main/
+│       │   ├── resources/
+│       │   │   ├── application.properties
+│       │   │   └── application-cargoclique.properties
+│       │   └── java/com/psap/palletisation/
+│       │       ├── PalletisationApplication.java
+│       │       │
+│       │       ├── algorithm/
+│       │       │   ├── BestFitAlgorithm.java
+│       │       │   ├── ExtremePointAlgorithm.java
+│       │       │   ├── FirstFitAlgorithm.java
+│       │       │   ├── GeneticAlgorithm.java
+│       │       │   ├── OptimiserService.java
+│       │       │   └── util/
+│       │       │       ├── CgUtils.java
+│       │       │       ├── PlacementUtils.java
+│       │       │       ├── RotationUtils.java
+│       │       │       ├── ScoringUtils.java
+│       │       │       └── StabilityUtils.java
+│       │       │
+│       │       ├── config/
+│       │       │   └── WebConfig.java
+│       │       │
+│       │       ├── controller/
+│       │       │   ├── HealthController.java
+│       │       │   ├── JobController.java
+│       │       │   ├── PalletiseController.java
+│       │       │   └── UploadController.java
+│       │       │
+│       │       ├── dto/
+│       │       │   ├── request/
+│       │       │   │   ├── BoxPatch.java
+│       │       │   │   ├── CompareRequest.java
+│       │       │   │   ├── Constraints.java
+│       │       │   │   ├── ItemRequest.java
+│       │       │   │   ├── LayoutPatchRequest.java
+│       │       │   │   ├── ManualAdjustmentSettings.java
+│       │       │   │   ├── PalletPatch.java
+│       │       │   │   ├── PalletSpec.java
+│       │       │   │   └── PalletiseRequest.java
+│       │       │   └── response/
+│       │       │       ├── AdjustmentValidation.java
+│       │       │       ├── AlgorithmCompareEntry.java
+│       │       │       ├── BoxResult.java
+│       │       │       ├── CenterTotal.java
+│       │       │       ├── CompareResponse.java
+│       │       │       ├── JobStatus.java
+│       │       │       ├── LayoutPatchResponse.java
+│       │       │       ├── PalletResult.java
+│       │       │       ├── PalletiseResponse.java
+│       │       │       ├── StabilityIssue.java
+│       │       │       ├── StabilitySummary.java
+│       │       │       ├── SummaryResult.java
+│       │       │       ├── UnplacedBox.java
+│       │       │       ├── UploadResponse.java
+│       │       │       ├── VisualisationResponse.java
+│       │       │       └── WarningItem.java
+│       │       │
+│       │       ├── entity/
+│       │       │   ├── IntegrationJobEntity.java
+│       │       │   ├── IntegrationOrderEntity.java
+│       │       │   ├── IntegrationResultBoxEntity.java
+│       │       │   ├── IntegrationResultEntity.java
+│       │       │   └── SkuMasterEntity.java
+│       │       │
+│       │       ├── enums/
+│       │       │   ├── AlgorithmType.java
+│       │       │   ├── FractionalQuantityMode.java
+│       │       │   └── StackBy.java
+│       │       │
+│       │       ├── exception/
+│       │       │   └── GlobalExceptionHandler.java
+│       │       │
+│       │       ├── integration/
+│       │       │   ├── IntegrationErrorCodes.java
+│       │       │   ├── IntegrationException.java
+│       │       │   ├── controller/
+│       │       │   │   └── IntegrationController.java
+│       │       │   ├── dto/
+│       │       │   │   ├── request/
+│       │       │   │   │   ├── MasterDataRequest.java
+│       │       │   │   │   ├── OrderRequest.java
+│       │       │   │   │   ├── OrderSkuRequest.java
+│       │       │   │   │   └── SkuRequest.java
+│       │       │   │   └── response/
+│       │       │   │       ├── IntegrationErrorResponse.java
+│       │       │   │       ├── LoadBoxResult.java
+│       │       │   │       ├── LoadDataResponse.java
+│       │       │   │       ├── LoadPalletResult.java
+│       │       │   │       ├── MasterDataResponse.java
+│       │       │   │       ├── MixedPalletDataResponse.java
+│       │       │   │       └── OrderStatusResponse.java
+│       │       │   ├── security/
+│       │       │   │   ├── ApiKeyFilter.java
+│       │       │   │   └── IntegrationSecurityConfig.java
+│       │       │   └── service/
+│       │       │       ├── IntegrationAsyncRunner.java
+│       │       │       └── IntegrationService.java
+│       │       │
+│       │       ├── model/
+│       │       │   ├── Box.java
+│       │       │   └── Pallet.java
+│       │       │
+│       │       ├── repository/
+│       │       │   ├── IntegrationJobRepository.java
+│       │       │   ├── IntegrationOrderRepository.java
+│       │       │   ├── IntegrationResultBoxRepository.java
+│       │       │   ├── IntegrationResultRepository.java
+│       │       │   └── SkuMasterRepository.java
+│       │       │
+│       │       └── service/
+│       │           ├── ExportService.java
+│       │           ├── JobStoreService.java
+│       │           ├── LayoutValidationService.java
+│       │           ├── ParserService.java
+│       │           └── ValidationService.java
+│       │
+│       └── test/java/com/psap/palletisation/
+│           ├── algorithm/
+│           │   ├── BestFitAlgorithmTest.java
+│           │   ├── ExtremePointAlgorithmTest.java
+│           │   ├── FirstFitAlgorithmTest.java
+│           │   ├── GeneticAlgorithmTest.java
+│           │   └── util/
+│           │       └── CgUtilsTest.java
+│           ├── controller/
+│           │   ├── JobControllerTest.java
+│           │   └── PalletiseControllerTest.java
+│           ├── integration/
+│           │   └── IntegrationControllerTest.java
+│           └── service/
+│               ├── LayoutValidationServiceTest.java
+│               └── ValidationServiceTest.java
+│
+└── frontend/
+    ├── Dockerfile
+    ├── next.config.js
+    ├── next-env.d.ts
+    ├── package.json
+    ├── package-lock.json
+    ├── postcss.config.js
+    ├── tailwind.config.js
+    ├── tsconfig.json
+    ├── .nvmrc
+    └── src/
+        ├── app/
+        │   ├── globals.css
+        │   ├── layout.tsx
+        │   ├── page.tsx
+        │   ├── compare/
+        │   │   └── page.tsx
+        │   ├── optimise/
+        │   │   └── page.tsx
+        │   ├── results/
+        │   │   └── [jobId]/
+        │   │       └── page.tsx
+        │   ├── settings/
+        │   │   └── page.tsx
+        │   └── upload/
+        │       └── page.tsx
+        ├── components/
+        │   ├── AlgorithmComparisonTable.tsx
+        │   ├── BoxInspectorPanel.tsx
+        │   ├── CollapsibleDiagnosticsPanel.tsx
+        │   ├── ConstraintForm.tsx
+        │   ├── EditPanel.tsx
+        │   ├── LayerGuideGrid.tsx
+        │   ├── Layout.tsx
+        │   ├── ManualAdjustToolbar.tsx
+        │   ├── OrderSearchPanel.tsx
+        │   ├── OrderTable.tsx
+        │   ├── PalletLayerViewer.tsx
+        │   ├── PalletViewer3D.tsx
+        │   ├── ResultSummaryCards.tsx
+        │   ├── Sidebar.tsx
+        │   ├── SkuLegend.tsx
+        │   ├── StabilityIssuesPanel.tsx
+        │   ├── UploadDropzone.tsx
+        │   └── WarningsPanel.tsx
+        └── lib/
+            ├── api.ts
+            ├── autoFit.ts
+            ├── boxTransforms.ts
+            ├── cgUtils.ts
+            ├── compactLayout.ts
+            ├── defaults.ts
+            ├── layoutValidation.ts
+            ├── mockData.ts
+            ├── rowLocking.ts
+            ├── skuColors.ts
+            ├── snapping.ts
+            └── types.ts
 ```
 
 ---
@@ -107,8 +302,6 @@ cd backend
 ./gradlew test
 ```
 
-28 unit and integration tests covering all four algorithms, validation service, layout validation, and controller endpoints.
-
 ---
 
 ## Render Deployment
@@ -165,7 +358,7 @@ curl -X POST http://localhost:8000/api/v1/palletise \
     "algorithm": "EXTREME_POINT",
     "pallet": {
       "length_mm": 1200,
-      "width_mm": 1100,
+      "width_mm": 1000,
       "max_height_mm": 1150,
       "max_weight_kg": 1500
     },
@@ -202,7 +395,7 @@ curl -X POST http://localhost:8000/api/v1/palletise/compare \
   -d '{
     "order_id": "CMP-001",
     "algorithms": ["FIRST_FIT", "BEST_FIT", "EXTREME_POINT", "GENETIC"],
-    "pallet": {"length_mm": 1200, "width_mm": 1100, "max_height_mm": 1150, "max_weight_kg": 1500},
+    "pallet": {"length_mm": 1200, "width_mm": 1000, "max_height_mm": 1150, "max_weight_kg": 1500},
     "constraints": {"allow_rotation": true, "stack_by": "weight", "mix_products": true, "respect_fefo": true},
     "items": [{"sku": "BOX-A", "quantity": 5, "length_mm": 300, "width_mm": 200, "height_mm": 150, "weight_kg": 1.5}]
   }'

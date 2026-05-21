@@ -114,7 +114,7 @@ const DEFAULT_SETTINGS: ManualAdjustmentSettings = {
   prefer_larger_base: false,
 };
 
-const PALLET_SPEC = { length_mm: 1200, width_mm: 1100, max_height_mm: 1150, max_weight_kg: 1500 };
+const PALLET_SPEC = { length_mm: 1200, width_mm: 1000, max_height_mm: 1150, max_weight_kg: 1500 };
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function ResultsPage() {

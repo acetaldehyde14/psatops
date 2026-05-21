@@ -729,7 +729,7 @@ export const defaultPalletiseRequest: PalletiseRequest = {
   algorithm: "EXTREME_POINT",
   pallet: {
     length_mm: 1200,
-    width_mm: 1100,
+    width_mm: 1000,
     max_height_mm: 1150,
     max_weight_kg: 1500,
   },
